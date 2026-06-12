@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools >= 61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyTHM"
+version = "0.1.0"
+description = "python implementation of DONJON's THM: simplified thermal hydraulics module"
+authors = [
+    { name = "Raphael Guasch", email = "raphael.guasch@polymtl.ca" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "iapws",
+]
+
+
+[tool.setuptools.packages]
+find = {namespaces = false}
+
+[tool.setuptools.dynamic]
+version = {attr = "pyTHM.__version__"}
