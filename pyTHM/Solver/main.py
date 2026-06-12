@@ -98,15 +98,8 @@ class pyTHM_solver:
         self.convection_sol.set_Fission_Power(self.Powtot, self.axial_pow_form, self.Fpow) # set the fission power in the fuel rod, given the total power, the axial power form factors and the fraction of power deposited in the fuel
         # Resolve the DFM
         self.convection_sol.resolveDFM()
-        #print(f'Pressure: {self.convection_sol.P[-1]} Pa')
-        #print(f'Enthalpy: {self.convection_sol.H[-1]} J/kg')
-        #print(f'Void fraction: {self.convection_sol.voidFraction[-1]}')
-        #print(f'Density: {self.convection_sol.rho[-1]} kg/m^3')
-        #print(f'DV: {self.convection_sol.DV}')
         if self.solveConduction:
             self.Tsurf = self.convection_sol.compute_T_surf()
-            #print(f'Temperature at the surface: {self.Tsurf} K')
-            #print(f'Temperature of water: {self.convection_sol.T_water} K')
 
         if self.solveConduction:
             # Prepare and solve 1D radial heat conduction in the fuel rod, given a Clad surface temperature as a bondary condition 
@@ -215,8 +208,6 @@ class pyTHM_solver:
     def plot_Temperature_at_z(self, z_val):
         print(f"$$---------- Plotting Temperature distribution in rod + canal z = {z_val} m")
 
-        print(f"z_val is {z_val}")
-        print(f"z_mesh is {self.convection_sol.z_mesh}")
         if z_val in self.convection_sol.z_mesh:
             plane_index = int(np.where(self.convection_sol.z_mesh==z_val)[0][0])
             Temperature_distrib_to_plot = self.T_distributions_axial[plane_index].T_distrib
@@ -231,7 +222,6 @@ class pyTHM_solver:
             second_plane_index = np.where(self.convection_sol.z_mesh>z_val)[0][0]
             first_plane_index = second_plane_index-1
             plane_index = (first_plane_index+second_plane_index)/2
-            print(f"plane index used is {plane_index}")
             plotting_mesh = self.T_distributions_axial[first_plane_index].plot_mesh
             radii_at_bounds = self.T_distributions_axial[first_plane_index].radii_at_bounds
             physical_regions_bounds = self.T_distributions_axial[first_plane_index].physical_regions_bounds
@@ -247,8 +237,6 @@ class pyTHM_solver:
             plane_index_print = plane_index
         else:
             plane_index_print = str(plane_index).split(".")[0]+str(plane_index).split(".")[1]
-        print(f"at z = {z_val}, temp distrib is = {Temperature_distrib_to_plot}")
-        print(f'z_axis is {plotting_mesh}')
         colors = ["lime", "bisque", "chocolate", "royalblue"]
         labels = ["Fuel", "Gap", "Clad", "Water"]
         fig_filled, axs = plt.subplots()
@@ -271,9 +259,6 @@ class pyTHM_solver:
             T.append(self.T_distributions_axial[i].T_distrib)
         R = self.T_distributions_axial[0].plot_mesh
         Z = self.convection_sol.z_mesh
-        print(f'T: {T}')
-        print(f'R: {R}')
-        print(f'Z: {Z}')
         plt.xlabel('Rayon (mm)')
         plt.ylabel('Hauteur (m)')
         plt.title('Temperature (K) en fonction du rayon et de la hauteur')
@@ -284,18 +269,9 @@ class pyTHM_solver:
 
     def get_TH_parameters(self):
         if self.solveConduction:
-            print(f'Tfuel : {self.T_eff_fuel} K')
-            print(f'Twater : {self.convection_sol.T_water} K')
-            print(f'Water void fraction: {self.convection_sol.voidFraction[-1]} K')
-            print(f'Water density: {self.convection_sol.rho[-1]} kg/m^3')
-            
             return np.array(self.T_eff_fuel), np.array(self.convection_sol.T_water), np.array(self.convection_sol.rho[-1]), np.array(self.convection_sol.voidFraction[-1]), np.array(self.convection_sol.P[-1]), np.array(self.convection_sol.U[-1]), np.array(self.convection_sol.H[-1])
         
         else: 
-            print(f'Twater : {self.convection_sol.T_water} K')
-            print(f'Water void fraction: {self.convection_sol.voidFraction[-1]} K')
-            print(f'Water density: {self.convection_sol.rho[-1]} kg/m^3')
-            
             return [0], self.convection_sol.T_water, self.convection_sol.voidFraction[-1], np.array(self.convection_sol.rho[-1]), self.convection_sol.P[-1], self.convection_sol.U[-1], self.convection_sol.H[-1]
 
 
@@ -363,8 +339,6 @@ class plotting:
             for case in self.caseList:
                 parameters.append([case.r_w, case.r_f, case.gap_r, case.clad_r, case.Lf, case.pOutlet, case.tInlet, case.uInlet, case.qFlow, case.I_z, case.Qfiss, case.convection_sol.DV, case.frfaccorel, case.P2Pcorel, case.voidFractionCorrel, case.numericalMethod])
 
-        print(len(temperature_cases))
-
         with pd.ExcelWriter(filename, engine='openpyxl') as writer:
             #Write parameters for each case to a sheet
             parameters_df = pd.DataFrame(parameters).T
@@ -419,7 +393,6 @@ class plotting:
             data[7][i] = (1/(1-genFoamVolumeFraction)) * data[7][i]
 
         genfoamCASE = [data[0], data[3], data[7], data[3], data[1], data[5]]
-        print(genfoamCASE[2])
 
         Tw_error, voidFraction_error, pressure_error, velocity_error, = [], [], [], []
         
@@ -653,8 +626,6 @@ class plotting:
         
 
         for i in range(len(self.caseList)):
-
-            print(f'Case {i}')
             voidFraction_error[i] = self.cleanList(voidFraction_error[i])
             Tw_error[i] = self.cleanList(Tw_error[i])
             pressure_error[i] = self.cleanList(pressure_error[i])
@@ -682,13 +653,6 @@ class plotting:
             meanTemp = np.sqrt(meanTemp/len(Tw_error))
             meanPressure = np.sqrt(meanPressure/len(pressure_error))
             meanVelocity = np.sqrt(meanVelocity/len(velocity_error))
-
-            print(f'Case {i}')
-            print(f'mean voidFraction: {voidFraction_error[i]}')
-            print(f'Void Fraction error moyenne: {meanVoid}, erreur max: {np.max(voidFraction_error[i])}, erreur min: {np.min(voidFraction_error[i])}')
-            print(f'Temperature error moyenne: {meanTemp}, erreur max: {np.max(Tw_error[i])}, erreur min: {np.min(Tw_error[i])}')
-            print(f'Pressure error moyenne: {meanPressure}, erreur max: {np.max(pressure_error[i])}, erreur min: {np.min(pressure_error[i])}')
-            print(f'Velocity error moyenne: {meanVelocity}, erreur max: {np.max(velocity_error[i])}, erreur min: {np.min(velocity_error[i])}')
 
             voidFraction_errors['mean'].append(np.mean(voidFraction_error[i]))
             voidFraction_errors['max'].append(np.max(voidFraction_error[i]))
@@ -997,7 +961,6 @@ class plotting:
             if visuParam[0]:
                 fig1, ax1 = plt.subplots()
                 for i in range(len(self.caseList)):
-                    print(f'Twater: { self.caseList[i].convection_sol.T_water}')
                     ax1.plot(self.caseList[i].convection_sol.z_mesh, self.caseList[i].convection_sol.T_water, label=self.caseList[i].numericalMethod)
                 ax1.set_xlabel("Axial position in m")
                 ax1.set_ylabel("Temperature in K")

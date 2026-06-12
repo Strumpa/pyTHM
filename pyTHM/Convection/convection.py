@@ -78,7 +78,6 @@ class DFMclass():
         pressureDrop = 186737 #Pa/m
         falsePInlet = pOutlet + height * pressureDrop
         self.hInlet = IAPWS97(T = self.tInlet, P = falsePInlet * 10**(-6)).h*1000 #J/kg
-        #print(f'hInlet: {self.hInlet}')
 
         #Geometry parameters
         self.height = height #m
@@ -100,15 +99,11 @@ class DFMclass():
         self.qFlow = qFlow #kg/s
         self.rhoInlet = IAPWS97(T = self.tInlet, P = falsePInlet*10**(-6)).rho #kg/m3
         self.uInlet = self.qFlow / (self.flowArea * self.rhoInlet) #m/s
-        #print('Velocity at the inlet: ', self.uInlet)
-        #print(f'uInlet: {self.uInlet}')
 
         self.DV = (self.height/self.nCells) * self.flowArea #Volume of the control volume m3
         
         if self.canalType == 'square':
-            
-            self.Dh =  4 * self.flowArea / ( 2*np.pi * self.cladRadius) #2*self.pitch +
-            #print(f'Dh: {self.Dh}')
+            self.Dh =  4 * self.flowArea / ( 2*np.pi * self.cladRadius)
         elif self.canalType == 'cylindrical':
             self.Dh = 4 * self.flowArea / (np.pi * self.waterRadius*2 + np.pi * self.cladRadius*2)
 
@@ -169,14 +164,10 @@ class DFMclass():
     
     #Fission power
     def set_Fission_Power(self, Ptot, axial_p_forms, Fpow):
-        print("Setting fission power distribution...")
-        print(f'Ptot: {Ptot} W, axial_p_forms: {axial_p_forms}, Fpow: {Fpow}')
         dv = self.pitch**2*(self.height / self.nCells) #m
-        print(f"dv: {dv} m3, pitch: {self.pitch} m, height: {self.height} m, nCells: {self.nCells}, flowArea: {self.flowArea} m2")
         Power_dist = Ptot * axial_p_forms / self.nCells #W Axial power distribution
         linear_powers = Power_dist
         assembly_section = self.pitch**2
-        print(f'assembly_section: {assembly_section} m2, fuelRadius: {self.fuelRadius} m, cladRadius: {self.cladRadius} m')
         proportion_fuel = assembly_section / (np.pi * self.fuelRadius**2) #m2
         fraction_in_fuel = Fpow*proportion_fuel #Fraction of the total power released in fuel
         fraction_in_coolant = (1.0-Fpow)*proportion_fuel # Fraction of the total power released in coolant
@@ -193,9 +184,6 @@ class DFMclass():
                 else:
                     self.q__[t] = Power_dist*fraction_in_fuel / dv #W/m3
             
-            print(f'q__: {self.q__}')
-            plt.plot(self.timeList, self.q__[:, -1])
-            plt.show()
 
     #Recovers the fission power distribution
     def get_QFUEL(self):
@@ -581,7 +569,6 @@ class DFMclass():
         self.rhoInlet = IAPWS97(T = self.tInlet, P = self.P[-1][0]*10**(-6)).rho #kg/m3
         self.uInlet = self.qFlow / (self.flowArea * self.rhoInlet) #m/s
         #Update hInlet
-        #print(f"uInlet:{self.uInlet}")
         self.hInlet = IAPWS97(T = self.tInlet, P = self.P[-1][0]*10**(-6)).h*1000 #J/kg
 
     #Main function to solve the drift flux model
@@ -750,8 +737,6 @@ class DFMclass():
                 plt.title(f'Champs pour le pas de temps {t}')
                 plt.legend()
                 plt.show() """
-                    
-                #print(f'U: {self.velocityList}, P: {self.pressureList}, H: {self.enthalpyList}')
 
             plt.ioff()
             plt.show()
@@ -802,13 +787,10 @@ class DFMclass():
         self.T_surf = np.zeros(self.nCells)
         self.Hc = np.zeros(self.nCells)
         for i in range(self.nCells):
-            #print(f'At axial slice = {i}, Pfin = {self.Pfin[i]}, h_z = {self.h_z[i]}')
             Pr_number = IAPWS97(P=self.Pfin[i]*10**-6, h=self.h_z[i]*10**-3).Liquid.Prandt
             Re_number = self.getReynoldsNumber(i)
             k_fluid = IAPWS97(P=self.Pfin[i]*10**-6, h=self.h_z[i]*10**-3).Liquid.k
-            #print(f"At axial slice = {i}, computed Reynold # = {Re_number}, computed Prandt # = {Pr_number}, k_fluid = {k_fluid}")
             self.Hc[i] = (0.023)*(Pr_number)**0.4*(Re_number)**0.8*k_fluid/self.D_h[i]
-            #print(f'self.Hc[i]: {self.Hc[i]}, \n self.q__[i]: {self.q__[i]} ,\n 2*np.pi*self.cladRadius: {2*np.pi*self.cladRadius}')
             self.T_surf[i] = ((self.q__[i]*self.flowArea)/(2*np.pi*self.cladRadius)/self.Hc[i]+self.T_water[i])
     
         return self.T_surf

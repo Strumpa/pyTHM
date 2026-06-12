@@ -94,13 +94,10 @@ def compute_power_densities(integrated_powers, r, Iz, height):
     Returns:
     power_densities (numpy array): Power densities at each axial node [W/m^3].
     """
-    print(len(integrated_powers))
-    print(f"integrated_powers = {integrated_powers} W")
 
     # Cross-sectional area of the cylinder (constant for all nodes)
     A_cross_section = np.pi * r**2
     z_values = np.linspace(0, height, Iz+1)
-    print(f"z_values = {z_values}")
     # Calculate the heights (Δz) of each control volume
     dz = np.diff(z_values)  # Heights between adjacent z positions
 
