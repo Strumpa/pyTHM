@@ -2,8 +2,8 @@
 #Authors : Clement Huet, Raphael Guasch
 
 
-from pyTHM.Conduction import HeatConductionInFuelPin as FDM_Fuel
-from pyTHM.Convection import DFMclass
+from ..Conduction.conduction import HeatConductionInFuelPin as FDM_Fuel
+from ..Convection.convection import DFMclass
 import numpy as np
 from iapws import IAPWS97
 import matplotlib.pyplot as plt

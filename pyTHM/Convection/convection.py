@@ -17,9 +17,8 @@
 import numpy as np
 from iapws import IAPWS97
 import matplotlib.pyplot as plt
-from THM_linalg import FVM
-from THM_linalg import numericalResolution
-from THM_waterProp import statesVariables
+from pyTHM.Solver.linalg import FVM, numericalResolution
+from pyTHM.WaterProperties.waterProperties import statesVariables
 import cProfile
 
 class DFMclass():
@@ -295,7 +294,7 @@ class DFMclass():
 
     #Create the matrix for the velocity and pressure coupling resolution equation system
     def createSystemVelocityPressure(self):
-        
+
         U_old = self.U[-1]
         P_old = self.P[-1]
         H_old = self.H[-1]
@@ -587,6 +586,7 @@ class DFMclass():
 
     #Main function to solve the drift flux model
     def resolveDFM(self):
+
 
         #Steady state
         if self.dt == 0:
