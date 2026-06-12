@@ -175,12 +175,6 @@ class HeatConductionInFuelPin:
         return
     
     def solve_T_in_pin(self):
-        for row in self.A:
-            line = "[  "
-            for elem in row:
-                line+=f"{elem:.3f}   "
-            line += "  ]\n"
-            #print(line)
         self.T_distrib = np.linalg.solve(self.A, self.D)
         self.compute_T_center()
         T_distrib_with_center = np.zeros(self.N_node+1)

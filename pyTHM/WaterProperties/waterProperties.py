@@ -255,7 +255,6 @@ class statesVariables():
                 return 1
             
             elif H*0.001 <= hg and H*0.001 >= hl:
-                #print(f'Quality: {(H*0.001 - hl)/(hg - hl)}')
                 return (H*0.001 - hl)/(hg - hl)
         
         elif correl == 'EPRI':
@@ -275,7 +274,6 @@ class statesVariables():
                 else:
                     rhol = self.rholTEMP[i]
                     rhog = self.rhogTEMP[i]
-                    #print(f'i: {i}, rho_l: {rhol}, rho_g: {rhog}, hauteur: {i*self.Dz}')
                     u = self.U[i]
                     muf = IAPWS97(P = p*(10**(-6)), x = 1).mu
                     Re = rhol * abs(u) * self.D_h[i] / muf
@@ -285,7 +283,6 @@ class statesVariables():
                     Pr = Cpf * muf / k_f
 
                 
-                    #qdp = (p * self.D_h[i])  /(2 * np.pi * self.rf * self.D_h[i])
                     qdp = self.q__[i] * self.DV / (2 * np.pi * self.rw * self.height)
 
                     # Calculate heat transfer coefficients
@@ -452,10 +449,7 @@ class statesVariables():
         U = self.U[i]
         P = self.P[i]
         Re = self.getReynoldsNumberLiquidD5(i)
-        print(f"At K={i}, Reynolds number = {Re:.5E}")
-        #print('voidFraction list: ', self.voidFractionTEMP)
         if (self.voidFractionTEMP[i]<0.002):
-            #print(f"Void fraction: {self.voidFractionTEMP[i]}")
             return 0.316 * Re**(-0.25)
         if self.frfaccorel == 'base': #Validated
             return 0.003
@@ -472,7 +466,6 @@ class statesVariables():
             Ra = 0.4 * (10**(-6)) #Roughness
             R = Ra / self.D_h[i]
             frict=8*(((8.0/Re)**12)+((2.475*np.log(((7/Re)**0.9)+0.27*R))**16+(37530/Re)**16)**(-1.5))**(1/12)
-            print(f"At K={i}, friction factor = {frict:.5E}")
             return frict
         elif self.frfaccorel == 'Churchill_notOK':
             Re = self.getReynoldsNumberLiquid(i)
@@ -496,7 +489,6 @@ class statesVariables():
         if self.P2Pcorel == 'base': #Validated
             phi2phi = 1 + 3*epsilon
         elif self.P2Pcorel == 'lockhartMartinelli':
-            #return np.sqrt(self.lockhartMartinelli(i))
             return self.lockhartMartinelli(i)
         elif self.P2Pcorel == 'HEM1': #Validated
             phi2phi = (rho/rho_l)*((rho_l/rho_g)*x_th + +1)
@@ -505,7 +497,6 @@ class statesVariables():
             phi2phi = (rho/rho_l)*((m-1)*x_th + 1)*((rho_l/rho_g)*x_th + +1)**(0.25)
         elif self.P2Pcorel == 'MNmodel': #Validated
             phi2phi = (1.2 * (rho_l/rho_g -1)*x_th**(0.824) + 1)*(rho/rho_l)
-            #print(f'Phi2phi : {phi2phi}')
         else:
             raise ValueError('Invalid two-phase pressure multiplier correlation model')
         return phi2phi
@@ -580,7 +571,6 @@ class statesVariables():
         """
         ## Clement's correlation 
         X = np.sqrt(rho_l/rho_g)*(Ul/Ug)
-        #print(f"At K={i}, PHIL0 = {1 + 1/np.sqrt(X) + 20/X}")
         return 1 + 1/np.sqrt(X) + 20/X
         ## End Clement's correlation
         """
@@ -594,7 +584,6 @@ class statesVariables():
             mu_l = IAPWS97(P = self.P[i]*(10**(-6)), x = 0).Liquid.mu
             XLM = ((1-xth)/xth)**0.9*(rho_g/rho_l)**0.5*(mu_g/mu_l)**0.1
             PHIL0 = (1.0 + 20/XLM + 1.0/XLM**2)**0.5
-            print(f"At K={i}, PHIL0 = {PHIL0}")
         return PHIL0
             
     
