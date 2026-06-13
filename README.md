@@ -5,6 +5,12 @@
  - Current implementation is limited to a single channel drift flux model to solve the mass, momentum and energy conservation equations in the coolant.
  
  This version is meant as an external python package that can be coupled to the DONJON neutronics solvers in order to obtain coupled neutornics - thermalhydraulics solutions.
-
+ 
+## To clone and install pyTHM in your python environment run : 
+git clone https://github.com/Strumpa/pyTHM.git
+cd pyTHM
+pip install .
+## To run tests (~60 s expected for full PSBT test suite) 
+pytest
 ## To contribute :
 Create your own branch, develop, make sure tests pass, submit a pull request to implement your changes.
