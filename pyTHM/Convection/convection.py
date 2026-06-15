@@ -22,7 +22,7 @@ from pyTHM.WaterProperties.waterProperties import statesVariables
 import cProfile
 
 class DFMclass():
-    def __init__(self, canal_type, nCells, tInlet, qFlow, pOutlet, height, fuelRadius, cladRadius, pitch,  numericalMethod, frfaccorel, P2P2corel, voidFractionCorrel, dt = 0, t_tot = 0, D_h = 0, volumetricArea = 0):
+    def __init__(self, canal_type, nCells, tInlet, qFlow, pOutlet, height, fuelRadius, cladRadius, pitch,  numericalMethod, frfaccorel, P2P2corel, voidFractionCorrel, dt = 0, t_tot = 0, D_h = 0, volumetricArea = 0, porosities=None, dhs=None, phs=None):
         
         """
         Attributes:
@@ -114,19 +114,40 @@ class DFMclass():
         self.K_loss = 0.0
 
         #Porous media parameters
-        self.porosity = 1
-        self.poro = []
-        for i in range(self.nFaces):
-            if i > self.nFaces/4:
-                self.poro.append(self.porosity)
-            else:
-                self.poro.append(1)
+        if porosities is not None and dhs is not None and phs is not None:
+            self.poro = np.zeros(self.nFaces)
+            self.D_h = np.zeros(self.nFaces)
+            self.phs = np.zeros(self.nFaces)
 
-        self.D_h = []
-        self.areaMatrix = []
-        for i in range(self.nFaces):
-            self.areaMatrix.append(self.poro[i] * self.flowArea)
-            self.D_h.append(self.Dh * self.poro[i]**2)
+            self.poro[0] = porosities[0]
+            self.D_h[0] = dhs[0]
+            self.phs[0] = phs[0]
+            for i in range(1, self.nCells):
+                self.poro[i] = (porosities[i-1]+porosities[i])/2.0
+                self.D_h[i] = (dhs[i-1]+dhs[i])/2.0
+                self.phs[i] = (phs[i-1]+phs[i])/2.0
+            self.poro[self.nCells] = porosities[-1]
+            self.D_h[self.nCells] = dhs[-1]
+            self.phs[self.nCells] = phs[-1]
+            self.areaMatrix=[]
+            for i in range(self.nFaces):
+                self.areaMatrix.append(self.poro[i] * self.flowArea)
+        else:
+            self.porosity = 1
+            self.poro = []
+            for i in range(self.nFaces):
+                if i > self.nFaces/4:
+                    self.poro.append(self.porosity)
+                else:
+                    self.poro.append(1)
+
+            self.D_h = []
+            self.areaMatrix = []
+            self.phs = []
+            for i in range(self.nFaces):
+                self.areaMatrix.append(self.poro[i] * self.flowArea)
+                self.D_h.append(self.Dh * self.poro[i]**2)
+                self.phs.append(2*np.pi*self.cladRadius)
 
 
         self.epsInnerIteration = 1e-4
@@ -174,13 +195,15 @@ class DFMclass():
         if self.dt == 0:
             self.QFUEL = Power_dist*fraction_in_fuel / dv #W/m3
             phi2 = 0.5*self.QFUEL*self.fuelRadius**2 / self.cladRadius
-            self.q__ = 2 * np.pi * self.cladRadius / (self.flowArea) * phi2 # W/m3 in the coolant
+            self.q__ = np.zeros(self.nCells)
+            for i in range(self.nCells):
+                self.q__[i] = phi2[i]*self.phs[i] / self.areaMatrix[i]
         if self.dt != 0: # This option is not suppoted yet, dummy initialization for now
             t_final_q = 0
             self.q__ = np.zeros((len(self.timeList), len(axial_p_forms)))
             for t, time in enumerate(self.timeList):
                 if time < t_final_q:
-                    self.q__[t] = (self.timeList[t]/t_final_q)*Power_dist*fraction_in_fuel / dv #W/m3
+                    self.q__[t] = (self.timeList[t]/t_final_q)*(phi2[i]*self.phs[i]/self.areaMatrix[i]) #W/m3
                 else:
                     self.q__[t] = Power_dist*fraction_in_fuel / dv #W/m3
             
