@@ -66,6 +66,9 @@ def test_GE14_cases():
     acool_profile = [a / 10000.0 for a in geom_profiles[2]] # Conversion cm² -> m²
     dhs_profile = [dh * 1e-2 for dh in geom_profiles[3]]    # Conversion cm -> m
     phs_profile = [pch * 1e-2 for pch in geom_profiles[4]]  # Conversion cm -> m
+    kexp_profile = geom_profiles[5]
+    kcon_profile = geom_profiles[6]
+    rsin_profile = geom_profiles[7]
 
     # Paramètres géométriques de base extraits du YAML
     pin_geom = analyser.data_ref['PIN_GEOMETRY']
@@ -130,8 +133,12 @@ def test_GE14_cases():
                     numericalMethod="BiCG",
                     # Vos nouvelles listes StarterDD :
                     porosities=porosities_profile,
+                    acools=acool_profile,
                     dhs=dhs_profile,
-                    phs=phs_profile
+                    phs=phs_profile,
+                    kexp_profile=kexp_profile,
+                    kcon_profile=kcon_profile,
+                    rsin_profile=rsin_profile
                 )
                 
                 # Récupération et affichage d'un résumé des résultats

@@ -48,7 +48,7 @@ class statesVariables():
     - getReynoldsNumber(i): Computes the Reynolds number for flow in a given cell.
     """
 
-    def __init__(self, U, P, H, voidFraction, D_h, areaMatrix, DV, voidFractionCorrel, frfaccorel, P2Pcorel, Dz, q__, qFlow, rf, rw):
+    def __init__(self, U, P, H, voidFraction, D_h, areaMatrix, poro, DV, voidFractionCorrel, frfaccorel, P2Pcorel, Dz, q__, qFlow, rf, rw, kexp, kcon, rsin):
         
         self.nCells = len(U)
         self.U = U
@@ -61,6 +61,7 @@ class statesVariables():
         self.g = 9.81
         self.D_h = D_h
         self.areaMatrix = areaMatrix
+        self.poro = poro
         self.K_loss = 0#0.1
         self.Dz = Dz
         self.DV = DV
@@ -69,7 +70,9 @@ class statesVariables():
         self.rf = rf
         self.rw = rw
         self.height = self.Dz * self.nCells
-
+        self.kexp = kexp
+        self.kcon = kcon
+        self.rsin = rsin
     #Create the array to store the temporary values of the variables
     def createFields(self):
         self.areaMatrixTEMP = np.ones(self.nCells)
@@ -283,13 +286,13 @@ class statesVariables():
                     Pr = Cpf * muf / k_f
 
                 
-                    qdp = self.q__[i] * self.DV / (2 * np.pi * self.rw * self.height)
+                    qdp = self.q__[i] * self.DV[i] / (2 * np.pi * self.rw * self.height)
 
                     # Calculate heat transfer coefficients
                     hb = np.exp(p / 4.35e6) / (22.7)**2 * 1000.0  # W/(m^2·K)
                     Chn = 0.2 / 4.0 * self.D_h[i] / self.rf
                     hhn = Chn * Re**0.662 * Pr * k_f / (self.D_h[i])
-                    Cdb = (0.033 *self.areaMatrix[i] / (self.areaMatrix[i] +  np.pi * self.rf**2 + np.pi *self.rw**2) + 0.013)
+                    Cdb = (0.033 *self.areaMatrix[i] / (self.areaMatrix[i]/self.poro[i]) + 0.013)
                     hdb = Cdb * Re**0.8 * Pr**0.4 * k_f / (self.D_h[i])
 
                     # Intermediate calculations
@@ -490,6 +493,8 @@ class statesVariables():
             phi2phi = 1 + 3*epsilon
         elif self.P2Pcorel == 'lockhartMartinelli':
             return self.lockhartMartinelli(i)
+        elif self.P2Pcorel == 'friedel':
+            return self.friedel(i)
         elif self.P2Pcorel == 'HEM1': #Validated
             phi2phi = (rho/rho_l)*((rho_l/rho_g)*x_th + +1)
         elif self.P2Pcorel == 'HEM2': #Validated    
@@ -500,12 +505,95 @@ class statesVariables():
         else:
             raise ValueError('Invalid two-phase pressure multiplier correlation model')
         return phi2phi
+    def getPhi2Expansion(self, i):
+        """
+        Multiplicateur diphasique en expansion soudaine (Modèle de Romie)
+        """
+        x = self.xThTEMP[i]
+        epsilon = self.voidFractionTEMP[i]
+        rho_l = self.rholTEMP[i]
+        rho_g = self.rhogTEMP[i]
+        # Sécurité numérique : si on est en monophasique liquide pur
+        if x <= 1e-5 or epsilon <= 1e-5:
+            return 1.0
+        # Modèle de Romie
+        phi2_exp = ((1 - x)**2) / (1 - epsilon) + (rho_l / rho_g) * (x**2 / epsilon)
+        
+        return phi2_exp
+
+    def getPhi2Contraction(self, i):
+        """
+        Multiplicateur diphasique en contraction soudaine (Modèle de Chisholm)
+        """
+        x = self.xThTEMP[i]
+        epsilon = self.voidFractionTEMP[i]
+        rho_l = self.rholTEMP[i]
+        rho_g = self.rhogTEMP[i]
+        sigma_A = self.rsin[i]  # Ratio d'aire (A_petit / A_grand)
+        
+        # Sécurité numérique pour le monophasique ou si pas de contraction (sigma_A = 1)
+        if x <= 1e-5 or epsilon <= 1e-5 or sigma_A >= 0.999:
+            return 1.0
+
+        # --- 1. Calcul du paramètre de Martinelli (X) ---
+        mu_g = IAPWS97(P=self.P[i]*1e-6, x=1).Vapor.mu
+        mu_l = IAPWS97(P=self.P[i]*1e-6, x=0).Liquid.mu
+        X_LM = ((1 - x) / x)**0.9 * (rho_g / rho_l)**0.5 * (mu_g / mu_l)**0.1
+        
+        # --- 2. Calcul de K_o ---
+        if X_LM >= 1.0:
+            K_o = (1.0 + x * (rho_l / rho_g - 1.0))**0.5
+        else:
+            K_o = (rho_l / rho_g)**0.25
+            
+        # --- 3. Calcul de C_c (Équation 52) ---
+        C_c = 1.0 / (0.639 * (1.0 - sigma_A)**0.5 + 1.0)
+        
+        # --- 4. Calcul de B ---
+        # Numérateur de B
+        num_B = (1.0 / K_o) * (1.0 / (sigma_A * C_c)**2 - 1.0) - (2.0 / (K_o * C_c * sigma_A**2)) + (2.0 / (sigma_A**2 * K_o**0.28))
+        # Dénominateur de B
+        den_B = (1.0 / (sigma_A * C_c)**2) - 1.0 - (2.0 / (C_c * sigma_A**2)) + (2.0 / sigma_A**2)
+        
+        if den_B == 0:
+            B = 0.0  # Fallback de sécurité
+        else:
+            B = num_B / den_B
+            
+        # --- 5. Multiplicateur final ---
+        phi2_con = 1.0 + (rho_l / rho_g - 1.0) * (B * x * (1.0 - x) + x**2)
+        return phi2_con
     
     #Get the positive and negative flow areas for a given cell (take into account the two-phase pressure multiplier and friction factor)
     def getAreas(self, i):
-        if self.voidFractionTEMP[i] > - 0.001:
-            A_chap_pos = self.areaMatrix[i-1] +  (self.getPhi2Phi(i-1)/4) * ((self.fTEMP[i-1] / self.D_h[i-1]) + (self.K_loss / self.Dz)) * self.DV
-            A_chap_neg = self.areaMatrix[i] - (self.getPhi2Phi(i)/4) * ((self.fTEMP[i] / self.D_h[i]) + (self.K_loss / self.Dz)) * self.DV
+        if self.voidFractionTEMP[i] > -0.001:
+            # --- FACE POSITIVE (i-1) ---
+            rho_m_pos = self.rhoTEMP[i-1]
+            rho_l_pos = self.rholTEMP[i-1]
+            A_pos = self.areaMatrix[i-1]
+            
+            # Friction linéaire classique
+            loss_fric_pos = (self.getPhi2Phi(i-1)/4) * (self.fTEMP[i-1] / self.D_h[i-1]) * self.DV[i-1]
+            
+            # Application de la formule : loss = 0.5 * phi2 * K * (rho_m / rho_l) * Area
+            loss_exp_pos = 0.5 * self.getPhi2Expansion(i-1) * self.kexp[i-1] * (rho_m_pos / rho_l_pos) * A_pos
+            loss_con_pos = 0.5 * self.getPhi2Contraction(i-1) * self.kcon[i-1] * (rho_m_pos / rho_l_pos) * A_pos
+            
+            A_chap_pos = A_pos + loss_fric_pos + loss_exp_pos + loss_con_pos
+
+            # --- FACE NÉGATIVE (i) ---
+            rho_m_neg = self.rhoTEMP[i]
+            rho_l_neg = self.rholTEMP[i]
+            A_neg = self.areaMatrix[i]
+            
+            # Friction linéaire classique
+            loss_fric_neg = (self.getPhi2Phi(i)/4) * (self.fTEMP[i] / self.D_h[i]) * self.DV[i]
+            
+            # Application de la formule
+            loss_exp_neg = 0.5 * self.getPhi2Expansion(i) * self.kexp[i] * (rho_m_neg / rho_l_neg) * A_neg
+            loss_con_neg = 0.5 * self.getPhi2Contraction(i) * self.kcon[i] * (rho_m_neg / rho_l_neg) * A_neg
+            
+            A_chap_neg = A_neg - loss_fric_neg - loss_exp_neg - loss_con_neg
             
         return A_chap_pos, A_chap_neg
 
@@ -583,7 +671,7 @@ class statesVariables():
             mu_g = IAPWS97(P = self.P[i]*(10**(-6)), x = 1).Vapor.mu
             mu_l = IAPWS97(P = self.P[i]*(10**(-6)), x = 0).Liquid.mu
             XLM = ((1-xth)/xth)**0.9*(rho_g/rho_l)**0.5*(mu_g/mu_l)**0.1
-            PHIL0 = (1.0 + 20/XLM + 1.0/XLM**2)**0.5
+            PHIL0 = 1.0 + 20/XLM + 1.0/XLM**2
         return PHIL0
             
     
@@ -598,6 +686,52 @@ class statesVariables():
         return ((1.2*(rho_l/rho_g - 1)*self.xThTEMP[i]**0.824 + 1)*(rhom/rho_l)*(rho_l/rho_g))**2 #*self.xThTEMP[i] + 1)**0.25
         X = (fliq*rho_l*Ul**2)/(fgas*rho_g*Ug**2)
         return 1+20/X """
+    
+    def friedel(self, i):
+        """
+        Multiplicateur diphasique de frottement (Corrélation de Friedel)
+        Note : Cette corrélation renvoie phi^2_lo (Liquid-Only).
+        """
+        x = self.xThTEMP[i]
+        epsilon = self.voidFractionTEMP[i]
+        rho_l = self.rholTEMP[i]
+        rho_g = self.rhogTEMP[i]
+        P_MPa = self.P[i] * 1e-6
+
+        # Sécurité numérique pour le monophasique
+        if x <= 1e-5 or epsilon <= 1e-5:
+            return 1.0
+
+        # Propriétés thermodynamiques
+        mu_l = IAPWS97(P=P_MPa, x=0).Liquid.mu
+        mu_g = IAPWS97(P=P_MPa, x=1).Vapor.mu
+        sigma = IAPWS97(P=P_MPa, x=0).sigma
+
+        # Flux massique G (kg/m^2/s) et Diamètre hydraulique
+        G = self.rhoTEMP[i] * abs(self.U[i])
+        D_h = self.D_h[i]
+
+        # Densité homogène (Équation 41)
+        rho_H = 1.0 / (x / rho_g + (1.0 - x) / rho_l)
+
+        # Nombres adimensionnels (Froude et Weber)
+        Fr = (G**2) / (self.g * D_h * rho_H**2)
+        We = (G**2 * D_h) / (sigma * rho_H)
+
+        # Coefficients de friction de McAdams (Liquid-only et Gas-only)
+        Re_lo = G * D_h / mu_l
+        Re_go = G * D_h / mu_g
+        f_lo = 0.079 * (Re_lo)**(-0.25)
+        f_go = 0.079 * (Re_go)**(-0.25)
+
+        # Paramètres intermédiaires E, F, H
+        E = (1.0 - x)**2 + x**2 * (rho_l * f_go) / (rho_g * f_lo)
+        F = x**0.78 * (1.0 - x)**0.224
+        H_param = (rho_l / rho_g)**0.91 * (mu_g / mu_l)**0.19 * (1.0 - mu_g / mu_l)**0.7
+
+        # Multiplicateur final (Équation 40)
+        phi2_lo = E + (3.24 * F * H_param) / (Fr**0.045 * We**0.035)
+        return phi2_lo
     
     #get the velocity values for a given cell
     def getVelocity(self):

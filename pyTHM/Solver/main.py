@@ -17,7 +17,7 @@ class pyTHM_solver:
                  canal_radius, fuel_radius, gap_radius, clad_radius, fuel_rod_length, tInlet, pOutlet, qFlow, Powtot, axial_p_form, fraction_pow_fuel,
                  k_fuel, H_gap, k_clad, I_z, I_f, I_c, plot_at_z, solveConduction,
                  dt, t_tot, frfaccorel = 'base', P2Pcorel = 'base', voidFractionCorrel = 'GEramp', numericalMethod= 'FVM', 
-                 porosities=None, dhs=None, phs=None):
+                 porosities=None, acools=None, dhs=None, phs=None, kexp_profile=None, kcon_profile=None, rsin_profile=None):
         """
         Main constructor for THM case, first set of parameters correspond to canal properties, second set to fuel/gap/clad properties
         The structure followed is : 
@@ -44,12 +44,7 @@ class pyTHM_solver:
         self.I_z = I_z # number of mesh elements on axial mesh
         self.rhoInlet = 1000
         self.pOutlet =  pOutlet #Pa
-        if canal_type == "cylindrical":
-            self.flowArea = np.pi*self.r_w**2 - np.pi*fuel_radius**2
-        else:
-            self.flowArea = self.r_w**2 - fuel_radius**2
-            
-        self.uInlet = self.qFlow / (self.rhoInlet*self.flowArea) #m/s
+        self.uInlet = self.qFlow / (self.rhoInlet*acools[0]) #m/s
 
         self.Powtot = Powtot # Total reactor power in W
         self.axial_pow_form = axial_p_form # axial power form factors, representing the power distribution along the axial dimension of the fuel rod, used to compute the fission power in the fuel rod.
@@ -93,7 +88,7 @@ class pyTHM_solver:
         print(f'self.dt: {self.dt}')
         print(f'Courant number: {self.uInlet*self.dt/(self.Lf/self.I_z)}')
         print(f"Numerical Method {numericalMethod}")
-        self.convection_sol = DFMclass(self.canal_type, self.I_z, self.tInlet, self.qFlow, self.pOutlet, self.Lf, self.r_f, self.clad_r, self.r_w, self.numericalMethod, self.frfaccorel, self.P2Pcorel, self.voidFractionCorrel, dt = self.dt, t_tot = self.t_end, porosities = porosities, dhs = dhs, phs = phs)
+        self.convection_sol = DFMclass(self.canal_type, self.I_z, self.tInlet, self.qFlow, self.pOutlet, self.Lf, self.r_f, self.clad_r, self.r_w, self.numericalMethod, self.frfaccorel, self.P2Pcorel, self.voidFractionCorrel, dt = self.dt, t_tot = self.t_end, porosities = porosities, acools=acools, dhs = dhs, phs = phs, kexp=kexp_profile, kcon=kcon_profile, rsin=rsin_profile)
         print(f'Hydraulic diameter: {self.convection_sol.D_h}')
         # Set the fission power in the fuel rod
         self.convection_sol.set_Fission_Power(self.Powtot, self.axial_pow_form, self.Fpow) # set the fission power in the fuel rod, given the total power, the axial power form factors and the fraction of power deposited in the fuel

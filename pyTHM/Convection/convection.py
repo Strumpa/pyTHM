@@ -22,7 +22,7 @@ from pyTHM.WaterProperties.waterProperties import statesVariables
 import cProfile
 
 class DFMclass():
-    def __init__(self, canal_type, nCells, tInlet, qFlow, pOutlet, height, fuelRadius, cladRadius, pitch,  numericalMethod, frfaccorel, P2P2corel, voidFractionCorrel, dt = 0, t_tot = 0, D_h = 0, volumetricArea = 0, porosities=None, dhs=None, phs=None):
+    def __init__(self, canal_type, nCells, tInlet, qFlow, pOutlet, height, fuelRadius, cladRadius, pitch,  numericalMethod, frfaccorel, P2P2corel, voidFractionCorrel, dt = 0, t_tot = 0, D_h = 0, volumetricArea = 0, porosities=None, acools=None, dhs=None, phs=None, kexp=None, kcon=None, rsin=None):
         
         """
         Attributes:
@@ -87,25 +87,32 @@ class DFMclass():
         self.wall_dist = pitch
         self.canalType = canal_type
 
-        if self.canalType == 'square':
-            self.flowArea = self.pitch ** 2 - np.pi * self.cladRadius ** 2
-        elif self.canalType == 'cylindrical':
-            self.waterGap = self.pitch -  self.cladRadius #Gap between the clad and the water m
-            self.waterRadius =  self.pitch #External radius of the water m
-            self.flowArea = np.pi * self.waterRadius ** 2 - np.pi * self.cladRadius ** 2
+        #Porous media parameters
+        self.poro = np.zeros(self.nFaces)
+        self.areaMatrix = np.zeros(self.nFaces)
+        self.D_h = np.zeros(self.nFaces)
+        self.phs = np.zeros(self.nFaces)
 
+        self.poro[0] = porosities[0]
+        self.areaMatrix[0] = acools[0]
+        self.D_h[0] = dhs[0]
+        self.phs[0] = phs[0]
+        for i in range(1, self.nCells):
+            self.poro[i] = (porosities[i-1]+porosities[i])/2.0
+            self.areaMatrix[i] = (acools[i-1]+acools[i])/2.0    
+            self.D_h[i] = (dhs[i-1]+dhs[i])/2.0
+            self.phs[i] = (phs[i-1]+phs[i])/2.0
+        self.poro[self.nCells] = porosities[-1]
+        self.areaMatrix[self.nCells] = acools[-1]
+        self.D_h[self.nCells] = dhs[-1]
+        self.phs[self.nCells] = phs[-1]
 
         #calculate temporary uInlet
         self.qFlow = qFlow #kg/s
         self.rhoInlet = IAPWS97(T = self.tInlet, P = falsePInlet*10**(-6)).rho #kg/m3
-        self.uInlet = self.qFlow / (self.flowArea * self.rhoInlet) #m/s
+        self.uInlet = self.qFlow / (self.areaMatrix[0] * self.rhoInlet) #m/s
 
-        self.DV = (self.height/self.nCells) * self.flowArea #Volume of the control volume m3
-        
-        if self.canalType == 'square':
-            self.Dh =  4 * self.flowArea / ( 2*np.pi * self.cladRadius)
-        elif self.canalType == 'cylindrical':
-            self.Dh = 4 * self.flowArea / (np.pi * self.waterRadius*2 + np.pi * self.cladRadius*2)
+        self.DV = (self.height/self.nCells) * self.areaMatrix #Volume of the control volume m3
 
 
         self.Dz = self.height/self.nCells #Height of the control volume m
@@ -113,42 +120,21 @@ class DFMclass():
         self.epsilonTarget = 0.1
         self.K_loss = 0.0
 
-        #Porous media parameters
-        if porosities is not None and dhs is not None and phs is not None:
-            self.poro = np.zeros(self.nFaces)
-            self.D_h = np.zeros(self.nFaces)
-            self.phs = np.zeros(self.nFaces)
 
-            self.poro[0] = porosities[0]
-            self.D_h[0] = dhs[0]
-            self.phs[0] = phs[0]
+        self.kexp_face = np.zeros(self.nFaces)
+        self.kcon_face = np.zeros(self.nFaces)
+        self.rsin_face = np.ones(self.nFaces)
+        if kexp is not None and kcon is not None and rsin is not None:
+            self.kexp_face[0] = kexp[0]
+            self.kcon_face[0] = kcon[0]
+            self.rsin_face[0] = rsin[0]
             for i in range(1, self.nCells):
-                self.poro[i] = (porosities[i-1]+porosities[i])/2.0
-                self.D_h[i] = (dhs[i-1]+dhs[i])/2.0
-                self.phs[i] = (phs[i-1]+phs[i])/2.0
-            self.poro[self.nCells] = porosities[-1]
-            self.D_h[self.nCells] = dhs[-1]
-            self.phs[self.nCells] = phs[-1]
-            self.areaMatrix=[]
-            for i in range(self.nFaces):
-                self.areaMatrix.append(self.poro[i] * self.flowArea)
-        else:
-            self.porosity = 1
-            self.poro = []
-            for i in range(self.nFaces):
-                if i > self.nFaces/4:
-                    self.poro.append(self.porosity)
-                else:
-                    self.poro.append(1)
-
-            self.D_h = []
-            self.areaMatrix = []
-            self.phs = []
-            for i in range(self.nFaces):
-                self.areaMatrix.append(self.poro[i] * self.flowArea)
-                self.D_h.append(self.Dh * self.poro[i]**2)
-                self.phs.append(2*np.pi*self.cladRadius)
-
+                self.kexp_face[i] = (kexp[i-1] + kexp[i]) / 2.0
+                self.kcon_face[i] = (kcon[i-1] + kcon[i]) / 2.0
+                self.rsin_face[i] = (rsin[i-1] + rsin[i]) / 2.0
+            self.kexp_face[-1] = kexp[-1]
+            self.kcon_face[-1] = kcon[-1]
+            self.rsin_face[-1] = rsin[-1]
 
         self.epsInnerIteration = 1e-4
         self.maxInnerIteration = 1000
@@ -232,7 +218,7 @@ class DFMclass():
             self.H = [np.ones(self.nFaces)*self.hInlet] #
             self.voidFraction = [np.array([i*self.epsilonTarget/self.nFaces for i in range(self.nFaces)])]
 
-            updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.qFlow, self.fuelRadius,  self.pitch/2)
+            updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.qFlow, self.fuelRadius,  self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
             updateVariables.createFields()
                 
             self.xTh = [np.ones(self.nFaces)]
@@ -243,7 +229,7 @@ class DFMclass():
             self.f = [updateVariables.fTEMP]
             self.areaMatrix_1 = [updateVariables.areaMatrix_1TEMP]
             self.areaMatrix_2 = [updateVariables.areaMatrix_2TEMP]
-            self.areaMatrix = updateVariables.areaMatrixTEMP
+            #self.areaMatrix = updateVariables.areaMatrixTEMP
             self.Vgj = [updateVariables.VgjTEMP]
             self.C0 =[updateVariables.C0TEMP]
             self.VgjPrime = [updateVariables.VgjPrimeTEMP]
@@ -256,7 +242,7 @@ class DFMclass():
                 self.H = [self.enthalpyList[self.timeCount]]
                 self.voidFraction = [self.voidFractionList[self.timeCount]]
 
-                updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.qFlow, self.fuelRadius, self.pitch/2)
+                updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
                 updateVariables.createFields()
 
                 self.xTh = [np.ones(self.nFaces)]
@@ -267,7 +253,7 @@ class DFMclass():
                 self.f = [updateVariables.fTEMP]
                 self.areaMatrix_1 = [updateVariables.areaMatrix_1TEMP]
                 self.areaMatrix_2 = [updateVariables.areaMatrix_2TEMP]
-                self.areaMatrix = updateVariables.areaMatrixTEMP
+                #self.areaMatrix = updateVariables.areaMatrixTEMP
                 self.Vgj = [updateVariables.VgjTEMP]
                 self.C0 =[updateVariables.C0TEMP]
                 self.VgjPrime = [updateVariables.VgjPrimeTEMP]
@@ -361,7 +347,7 @@ class DFMclass():
                 ci = 0,
                 ai = - areaMatrix[i],
                 bi = areaMatrix[i+1],
-                di = - (((rho_old[i+1]+ rho_old[i])* self.g/2) * self.DV * ((self.poro[i%self.nFaces]+ self.poro[(i+1)%self.nFaces])/2) / 2) + DI)
+                di = - (((rho_old[i+1]+ rho_old[i])* self.g/2) * self.DV[i%self.nFaces] * ((self.poro[i%self.nFaces]+ self.poro[(i+1)%self.nFaces])/2) / 2) + DI)
             
                 VAR_VFM_Class.fillingOutsideBoundary(i, i-self.nFaces,
                 ai = - rho_old[i]*VAR_old[i-self.nFaces]*areaMatrix_old_2[i],
@@ -372,7 +358,7 @@ class DFMclass():
                 VAR_VFM_Class.set_ADi(i, ci = 0,
                 ai = - areaMatrix[i],
                 bi = areaMatrix[i+1],
-                di = - (((rho_old[i+1]+ rho_old[i])* self.g/2) * self.DV * ((self.poro[i%self.nFaces]+ self.poro[(i+1)%self.nFaces])/2)/ 2) + DI)
+                di = - (((rho_old[i+1]+ rho_old[i])* self.g/2) * self.DV[i%self.nFaces] * ((self.poro[i%self.nFaces]+ self.poro[(i+1)%self.nFaces])/2)/ 2) + DI)
             
                 VAR_VFM_Class.fillingOutsideBoundary(i, i-self.nFaces,
                 ai = - rho_old[i]*VAR_old[i-self.nFaces]*areaMatrix_old_2[i],
@@ -403,7 +389,7 @@ class DFMclass():
         i = -1
         DI = (1/2) * (P_old[i-1]*areaMatrix[i-1] - P_old[i]*areaMatrix[i]) * ((U_old[i]+ ((epsilon_old[i] * (rho_l_old[i] - rho_g_old[i]) * V_gj_old[i])/ rho_old[i]))+ (U_old[i-1]+ ((epsilon_old[i-1] * (rho_l_old[i-1] - rho_g_old[i-1]) * V_gj_old[i-1])/ rho_old[i-1]) ) )
         DI2 = - (epsilon_old[i]*rho_l_old[i]*rho_g_old[i]*Dhfg[i]*V_gj_old[i]*areaMatrix[i]/rho_old[i]) + (epsilon_old[i-1]*rho_l_old[i-1]*rho_g_old[i-1]*Dhfg[i-1]*V_gj_old[i-1]*areaMatrix[i-1]/rho_old[i-1])
-        DM1 = self.q__[i-1] * self.DV * (self.poro[i]) + DI + DI2
+        DM1 = self.q__[i-1] * self.DV[i] * (self.poro[i]) + DI + DI2
         VAR_VFM_Class = FVM(A00 = 1, A01 = 0, Am0 = - rho_old[-2] * U_old[-2] * areaMatrix[-2], Am1 = rho_old[-1] * U_old[-1] * areaMatrix[-1], D0 = self.hInlet, Dm1 = DM1, N_vol = self.nFaces, H = self.height)
         VAR_VFM_Class.boundaryFilling()
         for i in range(1,self.nFaces -1):
@@ -413,7 +399,7 @@ class DFMclass():
             VAR_VFM_Class.set_ADi(i, ci =  - rho_old[i-1] * U_old[i-1] * areaMatrix[i-1],
                 ai = rho_old[i] * U_old[i] * areaMatrix[i],
                 bi = 0,
-                di =  self.q__[i-1] * self.DV * (self.poro[i]) + DI2 + DI)
+                di =  self.q__[i-1] * self.DV[i] * (self.poro[i]) + DI2 + DI)
         
         self.FVM = VAR_VFM_Class
 
@@ -440,7 +426,7 @@ class DFMclass():
         DI = (1/2) * (P_old[i]*areaMatrix[i] - P_old[i-1]*areaMatrix[i-1]) * ((U_old[i]+ ((epsilon_old[i] * (rho_l_old[i] - rho_g_old[i]) * V_gj_old[i])/ rho_old[i]))+ (U_old[i-1]+ ((epsilon_old[i-1] * (rho_l_old[i-1] - rho_g_old[i-1]) * V_gj_old[i-1])/ rho_old[i-1]) ) )
         DI2 = - (epsilon_old[i]*rho_l_old[i]*rho_g_old[i]*Dhfg[i]*V_gj_old[i]*areaMatrix[i]/rho_old[i]) + (epsilon_old[i-1]*rho_l_old[i-1]*rho_g_old[i-1]*Dhfg[i-1]*V_gj_old[i-1]*areaMatrix[i-1]/rho_old[i-1])
         DT1 = - (self.pressureList[self.timeCount][i%self.nFaces] * self.areaMatrix[i] - P_old[i] * areaMatrix[i])*(self.Dz/self.dt) + (self.rhoList[self.timeCount][i%self.nFaces] * self.enthalpyList[self.timeCount][i%self.nFaces] * areaMatrix[i] * (self.Dz / self.dt))
-        DM1 = self.q__[self.timeCount][i-1] * self.DV * (self.poro[i]) + DI + DI2 + DT1
+        DM1 = self.q__[self.timeCount][i-1] * self.DV[i] * (self.poro[i]) + DI + DI2 + DT1
         VAR_VFM_Class = FVM(A00 = 1, A01 = 0, Am0 = - rho_old[-2] * U_old[-2] * areaMatrix[-2] + rho_old[-2] * areaMatrix[-2] * (self.Dz / self.dt), Am1 = rho_old[-1] * U_old[-1] * areaMatrix[-1], D0 = self.hInlet, Dm1 = DM1, N_vol = self.nFaces, H = self.height)
         VAR_VFM_Class.boundaryFilling()
         for i in range(1,self.nFaces -1):
@@ -451,7 +437,7 @@ class DFMclass():
             VAR_VFM_Class.set_ADi(i, ci =  - rho_old[i-1] * U_old[i-1] * areaMatrix[i-1] + rho_old[i] * areaMatrix[i] * (self.Dz / self.dt),
                 ai = rho_old[i] * U_old[i] * areaMatrix[i],
                 bi = 0,
-                di =  self.q__[self.timeCount][i-1] * self.DV * (self.poro[i]) + DI + DI2 + DT1)
+                di =  self.q__[self.timeCount][i-1] * self.DV[i] * (self.poro[i]) + DI + DI2 + DT1)
         
         self.FVM = VAR_VFM_Class
 
@@ -512,7 +498,7 @@ class DFMclass():
                 ci = 0,
                 ai = - areaMatrix[i],
                 bi = areaMatrix[i+1],
-                di = - ((rho_old[i+1]+ rho_old[i])* self.g * self.DV * ((self.poro[i%self.nFaces]+ self.poro[(i+1)%self.nFaces])/2) / 2) + DI + (self.rhoList[self.timeCount][i%self.nFaces] * areaMatrix[i] * self.velocityList[self.timeCount][i%self.nFaces] * (self.Dz / self.dt)))
+                di = - ((rho_old[i+1]+ rho_old[i])* self.g * self.DV[i%self.nFaces] * ((self.poro[i%self.nFaces]+ self.poro[(i+1)%self.nFaces])/2) / 2) + DI + (self.rhoList[self.timeCount][i%self.nFaces] * areaMatrix[i] * self.velocityList[self.timeCount][i%self.nFaces] * (self.Dz / self.dt)))
             
                 VAR_VFM_Class.fillingOutsideBoundary(i, i-self.nFaces,
                 ai = - rho_old[i]*VAR_old[i-self.nFaces]*areaMatrix_old_2[i] + rho_old[i]*areaMatrix[i]*(self.Dz/self.dt),
@@ -523,7 +509,7 @@ class DFMclass():
                 VAR_VFM_Class.set_ADi(i, ci = 0,
                 ai = - areaMatrix[i],
                 bi = areaMatrix[i+1],
-                di = - ((rho_old[i+1]+ rho_old[i])* self.g * self.DV * ((self.poro[i%self.nFaces]+ self.poro[(i+1)%self.nFaces])/2)/ 2) + DI + (self.rhoList[self.timeCount][i%self.nFaces] * areaMatrix[i] * self.velocityList[self.timeCount][i%self.nFaces] * (self.Dz / self.dt)))
+                di = - ((rho_old[i+1]+ rho_old[i])* self.g * self.DV[i%self.nFaces] * ((self.poro[i%self.nFaces]+ self.poro[(i+1)%self.nFaces])/2)/ 2) + DI + (self.rhoList[self.timeCount][i%self.nFaces] * areaMatrix[i] * self.velocityList[self.timeCount][i%self.nFaces] * (self.Dz / self.dt)))
             
                 VAR_VFM_Class.fillingOutsideBoundary(i, i-self.nFaces,
                 ai = - rho_old[i]*VAR_old[i-self.nFaces]*areaMatrix_old_2[i] + rho_old[i]*areaMatrix[i]*(self.Dz/self.dt),
@@ -590,7 +576,7 @@ class DFMclass():
     def updateInlet(self):
         #Update uInlet
         self.rhoInlet = IAPWS97(T = self.tInlet, P = self.P[-1][0]*10**(-6)).rho #kg/m3
-        self.uInlet = self.qFlow / (self.flowArea * self.rhoInlet) #m/s
+        self.uInlet = self.qFlow / (self.areaMatrix[0] * self.rhoInlet) #m/s
         #Update hInlet
         self.hInlet = IAPWS97(T = self.tInlet, P = self.P[-1][0]*10**(-6)).h*1000 #J/kg
 
@@ -627,7 +613,7 @@ class DFMclass():
                 Htemp = resolveSystem.x
 
                 self.H.append(Htemp)
-                updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.qFlow, self.fuelRadius, self.pitch/2)
+                updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
                 updateVariables.updateFields()
 
                 self.xTh.append(updateVariables.xThTEMP)
@@ -697,7 +683,7 @@ class DFMclass():
                     Htemp = resolveSystem.x
 
                     self.H.append(Htemp)
-                    updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.fuelRadius, self.pitch/2)
+                    updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
                     updateVariables.updateFields()
 
                     self.xTh.append(updateVariables.xThTEMP)
@@ -793,6 +779,7 @@ class DFMclass():
             self.f[-1].append((fTemp[i] + fTemp[i+1])/2)
             self.areaMatrix_1[-1].append((areaMatrix_1Temp[i] + areaMatrix_1Temp[i+1])/2)
             self.areaMatrix_2[-1].append((areaMatrix_2Temp[i] + areaMatrix_2Temp[i+1])/2)
+            self.areaMatrix.append((areaMatrixTemp[i] + areaMatrixTemp[i+1])/2)
             self.Vgj[-1].append((VgjTemp[i] + VgjTemp[i+1])/2)
             self.C0[-1].append((C0Temp[i] + C0Temp[i+1])/2)
             self.VgjPrime[-1].append((VgjPrimeTemp[i] + VgjPrimeTemp[i+1])/2)
@@ -814,7 +801,7 @@ class DFMclass():
             Re_number = self.getReynoldsNumber(i)
             k_fluid = IAPWS97(P=self.Pfin[i]*10**-6, h=self.h_z[i]*10**-3).Liquid.k
             self.Hc[i] = (0.023)*(Pr_number)**0.4*(Re_number)**0.8*k_fluid/self.D_h[i]
-            self.T_surf[i] = ((self.q__[i]*self.flowArea)/(2*np.pi*self.cladRadius)/self.Hc[i]+self.T_water[i])
+            self.T_surf[i] = ((self.q__[i]*self.areaMatrix[i])/(2*np.pi*self.cladRadius)/self.Hc[i]+self.T_water[i])
     
         return self.T_surf
 
@@ -844,7 +831,7 @@ class DFMclass():
     
     #Function to get the phases velocity
     def getPhasesVelocity(self):
-        water = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.qFlow, self.fuelRadius, self.pitch/2)
+        water = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
         Ul = [water.getUl(i) for i in range(self.nCells)]
         Ug = [water.getUg(i) for i in range(self.nCells)]
         return Ul, Ug
