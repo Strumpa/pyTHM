@@ -135,6 +135,10 @@ class DFMclass():
             self.kexp_face[-1] = kexp[-1]
             self.kcon_face[-1] = kcon[-1]
             self.rsin_face[-1] = rsin[-1]
+        
+        self.S_mass = np.zeros(self.nFaces)
+        self.S_mom = np.zeros(self.nFaces)
+        self.S_h = np.zeros(self.nFaces)
 
         self.epsInnerIteration = 1e-4
         self.maxInnerIteration = 1000
@@ -201,6 +205,12 @@ class DFMclass():
         """
         return self.QFUEL
     
+    def update_sources(self, S_mass, S_mom, S_h):
+        """Met à jour les termes sources latéraux (cross-flow et conduction) avant chaque itération"""
+        self.S_mass = S_mass
+        self.S_mom = S_mom
+        self.S_h = S_h
+
     def get_Fission_Power(self):
         """
         function to retrieve a given source term from the axial profile used to model fission power distribution in the fuel rod
@@ -332,13 +342,13 @@ class DFMclass():
                 VAR_VFM_Class.set_ADi(i, ci = - rho_old[i-1]*areaMatrix[i-1],
                 ai = rho_old[i]*areaMatrix[i],
                 bi = 0,
-                di =  0)
+                di =  self.S_mass[i])
             elif i == self.nFaces-1:
                 VAR_VFM_Class.set_ADi(i, 
                 ci = - rho_old[i-1]*areaMatrix[i-1],
                 ai = rho_old[i]*areaMatrix[i],
                 bi = 0,
-                di =  0)
+                di =  self.S_mass[i])
 
             #Inside the pressure submatrix
             elif i == self.nFaces:
@@ -347,7 +357,7 @@ class DFMclass():
                 ci = 0,
                 ai = - areaMatrix[i],
                 bi = areaMatrix[i+1],
-                di = - (((rho_old[i+1]+ rho_old[i])* self.g/2) * self.DV[i%self.nFaces] * ((self.poro[i%self.nFaces]+ self.poro[(i+1)%self.nFaces])/2) / 2) + DI)
+                di = - (((rho_old[i+1]+ rho_old[i])* self.g/2) * self.DV[i%self.nFaces] * ((self.poro[i%self.nFaces]+ self.poro[(i+1)%self.nFaces])/2) / 2) + DI + self.S_mom[i%self.nFaces])
             
                 VAR_VFM_Class.fillingOutsideBoundary(i, i-self.nFaces,
                 ai = - rho_old[i]*VAR_old[i-self.nFaces]*areaMatrix_old_2[i],
@@ -358,7 +368,7 @@ class DFMclass():
                 VAR_VFM_Class.set_ADi(i, ci = 0,
                 ai = - areaMatrix[i],
                 bi = areaMatrix[i+1],
-                di = - (((rho_old[i+1]+ rho_old[i])* self.g/2) * self.DV[i%self.nFaces] * ((self.poro[i%self.nFaces]+ self.poro[(i+1)%self.nFaces])/2)/ 2) + DI)
+                di = - (((rho_old[i+1]+ rho_old[i])* self.g/2) * self.DV[i%self.nFaces] * ((self.poro[i%self.nFaces]+ self.poro[(i+1)%self.nFaces])/2)/ 2) + DI + self.S_mom[i%self.nFaces])
             
                 VAR_VFM_Class.fillingOutsideBoundary(i, i-self.nFaces,
                 ai = - rho_old[i]*VAR_old[i-self.nFaces]*areaMatrix_old_2[i],
@@ -389,7 +399,7 @@ class DFMclass():
         i = -1
         DI = (1/2) * (P_old[i-1]*areaMatrix[i-1] - P_old[i]*areaMatrix[i]) * ((U_old[i]+ ((epsilon_old[i] * (rho_l_old[i] - rho_g_old[i]) * V_gj_old[i])/ rho_old[i]))+ (U_old[i-1]+ ((epsilon_old[i-1] * (rho_l_old[i-1] - rho_g_old[i-1]) * V_gj_old[i-1])/ rho_old[i-1]) ) )
         DI2 = - (epsilon_old[i]*rho_l_old[i]*rho_g_old[i]*Dhfg[i]*V_gj_old[i]*areaMatrix[i]/rho_old[i]) + (epsilon_old[i-1]*rho_l_old[i-1]*rho_g_old[i-1]*Dhfg[i-1]*V_gj_old[i-1]*areaMatrix[i-1]/rho_old[i-1])
-        DM1 = self.q__[i-1] * self.DV[i] * (self.poro[i]) + DI + DI2
+        DM1 = self.q__[i-1] * self.DV[i] + DI + DI2 +self.S_h[-1]
         VAR_VFM_Class = FVM(A00 = 1, A01 = 0, Am0 = - rho_old[-2] * U_old[-2] * areaMatrix[-2], Am1 = rho_old[-1] * U_old[-1] * areaMatrix[-1], D0 = self.hInlet, Dm1 = DM1, N_vol = self.nFaces, H = self.height)
         VAR_VFM_Class.boundaryFilling()
         for i in range(1,self.nFaces -1):
@@ -399,7 +409,7 @@ class DFMclass():
             VAR_VFM_Class.set_ADi(i, ci =  - rho_old[i-1] * U_old[i-1] * areaMatrix[i-1],
                 ai = rho_old[i] * U_old[i] * areaMatrix[i],
                 bi = 0,
-                di =  self.q__[i-1] * self.DV[i] * (self.poro[i]) + DI2 + DI)
+                di =  self.q__[i-1] * self.DV[i] + DI2 + DI + self.S_h[i])
         
         self.FVM = VAR_VFM_Class
 
@@ -426,7 +436,7 @@ class DFMclass():
         DI = (1/2) * (P_old[i]*areaMatrix[i] - P_old[i-1]*areaMatrix[i-1]) * ((U_old[i]+ ((epsilon_old[i] * (rho_l_old[i] - rho_g_old[i]) * V_gj_old[i])/ rho_old[i]))+ (U_old[i-1]+ ((epsilon_old[i-1] * (rho_l_old[i-1] - rho_g_old[i-1]) * V_gj_old[i-1])/ rho_old[i-1]) ) )
         DI2 = - (epsilon_old[i]*rho_l_old[i]*rho_g_old[i]*Dhfg[i]*V_gj_old[i]*areaMatrix[i]/rho_old[i]) + (epsilon_old[i-1]*rho_l_old[i-1]*rho_g_old[i-1]*Dhfg[i-1]*V_gj_old[i-1]*areaMatrix[i-1]/rho_old[i-1])
         DT1 = - (self.pressureList[self.timeCount][i%self.nFaces] * self.areaMatrix[i] - P_old[i] * areaMatrix[i])*(self.Dz/self.dt) + (self.rhoList[self.timeCount][i%self.nFaces] * self.enthalpyList[self.timeCount][i%self.nFaces] * areaMatrix[i] * (self.Dz / self.dt))
-        DM1 = self.q__[self.timeCount][i-1] * self.DV[i] * (self.poro[i]) + DI + DI2 + DT1
+        DM1 = self.q__[self.timeCount][i-1] * self.DV[i] + DI + DI2 + DT1 +self.S_h[-1]
         VAR_VFM_Class = FVM(A00 = 1, A01 = 0, Am0 = - rho_old[-2] * U_old[-2] * areaMatrix[-2] + rho_old[-2] * areaMatrix[-2] * (self.Dz / self.dt), Am1 = rho_old[-1] * U_old[-1] * areaMatrix[-1], D0 = self.hInlet, Dm1 = DM1, N_vol = self.nFaces, H = self.height)
         VAR_VFM_Class.boundaryFilling()
         for i in range(1,self.nFaces -1):
@@ -437,7 +447,7 @@ class DFMclass():
             VAR_VFM_Class.set_ADi(i, ci =  - rho_old[i-1] * U_old[i-1] * areaMatrix[i-1] + rho_old[i] * areaMatrix[i] * (self.Dz / self.dt),
                 ai = rho_old[i] * U_old[i] * areaMatrix[i],
                 bi = 0,
-                di =  self.q__[self.timeCount][i-1] * self.DV[i] * (self.poro[i]) + DI + DI2 + DT1)
+                di =  self.q__[self.timeCount][i-1] * self.DV[i] + DI + DI2 + DT1 + self.S_h[i])
         
         self.FVM = VAR_VFM_Class
 
@@ -483,13 +493,13 @@ class DFMclass():
                 VAR_VFM_Class.set_ADi(i, ci = - rho_old[i-1]*areaMatrix[i-1],
                 ai = rho_old[i]*areaMatrix[i],
                 bi = 0,
-                di =  ( self.rhoList[self.timeCount][i%self.nFaces] *areaMatrix[i] - rho_old[i] *areaMatrix[i] ) * (self.Dz / self.dt))
+                di =  ( self.rhoList[self.timeCount][i%self.nFaces] *areaMatrix[i] - rho_old[i] *areaMatrix[i] ) * (self.Dz / self.dt) + self.S_mass[i])
             elif i == self.nFaces-1:
                 VAR_VFM_Class.set_ADi(i, 
                 ci = - rho_old[i-1]*areaMatrix[i-1],
                 ai = rho_old[i]*areaMatrix[i],
                 bi = 0,
-                di =  ( self.rhoList[self.timeCount][i%self.nFaces] * areaMatrix[i] - rho_old[i] *areaMatrix[i] ) * (self.Dz / self.dt))
+                di =  ( self.rhoList[self.timeCount][i%self.nFaces] * areaMatrix[i] - rho_old[i] *areaMatrix[i] ) * (self.Dz / self.dt) + self.S_mass[i])
 
             #Inside the pressure submatrix
             elif i == self.nFaces:
@@ -498,7 +508,7 @@ class DFMclass():
                 ci = 0,
                 ai = - areaMatrix[i],
                 bi = areaMatrix[i+1],
-                di = - ((rho_old[i+1]+ rho_old[i])* self.g * self.DV[i%self.nFaces] * ((self.poro[i%self.nFaces]+ self.poro[(i+1)%self.nFaces])/2) / 2) + DI + (self.rhoList[self.timeCount][i%self.nFaces] * areaMatrix[i] * self.velocityList[self.timeCount][i%self.nFaces] * (self.Dz / self.dt)))
+                di = - ((rho_old[i+1]+ rho_old[i])* self.g * self.DV[i%self.nFaces] * ((self.poro[i%self.nFaces]+ self.poro[(i+1)%self.nFaces])/2) / 2) + DI + (self.rhoList[self.timeCount][i%self.nFaces] * areaMatrix[i] * self.velocityList[self.timeCount][i%self.nFaces] * (self.Dz / self.dt))+self.S_mom[i%self.nFaces])
             
                 VAR_VFM_Class.fillingOutsideBoundary(i, i-self.nFaces,
                 ai = - rho_old[i]*VAR_old[i-self.nFaces]*areaMatrix_old_2[i] + rho_old[i]*areaMatrix[i]*(self.Dz/self.dt),
@@ -509,7 +519,7 @@ class DFMclass():
                 VAR_VFM_Class.set_ADi(i, ci = 0,
                 ai = - areaMatrix[i],
                 bi = areaMatrix[i+1],
-                di = - ((rho_old[i+1]+ rho_old[i])* self.g * self.DV[i%self.nFaces] * ((self.poro[i%self.nFaces]+ self.poro[(i+1)%self.nFaces])/2)/ 2) + DI + (self.rhoList[self.timeCount][i%self.nFaces] * areaMatrix[i] * self.velocityList[self.timeCount][i%self.nFaces] * (self.Dz / self.dt)))
+                di = - ((rho_old[i+1]+ rho_old[i])* self.g * self.DV[i%self.nFaces] * ((self.poro[i%self.nFaces]+ self.poro[(i+1)%self.nFaces])/2)/ 2) + DI + (self.rhoList[self.timeCount][i%self.nFaces] * areaMatrix[i] * self.velocityList[self.timeCount][i%self.nFaces] * (self.Dz / self.dt))+self.S_mom[i%self.nFaces])
             
                 VAR_VFM_Class.fillingOutsideBoundary(i, i-self.nFaces,
                 ai = - rho_old[i]*VAR_old[i-self.nFaces]*areaMatrix_old_2[i] + rho_old[i]*areaMatrix[i]*(self.Dz/self.dt),

@@ -186,6 +186,15 @@ class statesVariables():
                     break
                 else:
                     self.voidFractionTEMP[i] = voidFractionNew
+                    if self.voidFractionTEMP[i] < 0.0:
+                        self.voidFractionTEMP[i] = 0.0
+                    elif self.voidFractionTEMP[i] > 0.999:
+                        self.voidFractionTEMP[i] = 0.999
+                        
+                    if self.xThTEMP[i] < 0.0:
+                        self.xThTEMP[i] = 0.0
+                    elif self.xThTEMP[i] > 1.0:
+                        self.xThTEMP[i] = 1.0
                     self.rhoTEMP[i] = self.getDensity(i)[2]
                     self.C0TEMP[i] = self.getC0(i)
                     self.VgjTEMP[i] = self.getVgj(i)
@@ -224,6 +233,15 @@ class statesVariables():
                     break
                 else:
                     self.voidFractionTEMP[i] = voidFractionNew
+                    if self.voidFractionTEMP[i] < 0.0:
+                        self.voidFractionTEMP[i] = 0.0
+                    elif self.voidFractionTEMP[i] > 0.999:
+                        self.voidFractionTEMP[i] = 0.999
+                        
+                    if self.xThTEMP[i] < 0.0:
+                        self.xThTEMP[i] = 0.0
+                    elif self.xThTEMP[i] > 1.0:
+                        self.xThTEMP[i] = 1.0
                     self.rhoTEMP[i] = self.getDensity(i)[2]
                     self.C0TEMP[i] = self.getC0(i)
                     self.VgjTEMP[i] = self.getVgj(i)
@@ -516,6 +534,8 @@ class statesVariables():
         # Sécurité numérique : si on est en monophasique liquide pur
         if x <= 1e-5 or epsilon <= 1e-5:
             return 1.0
+        if x >= 0.999 or epsilon >= 0.999:
+            return (rho_l / rho_g)
         # Modèle de Romie
         phi2_exp = ((1 - x)**2) / (1 - epsilon) + (rho_l / rho_g) * (x**2 / epsilon)
         
@@ -534,7 +554,9 @@ class statesVariables():
         # Sécurité numérique pour le monophasique ou si pas de contraction (sigma_A = 1)
         if x <= 1e-5 or epsilon <= 1e-5 or sigma_A >= 0.999:
             return 1.0
-
+        
+        if x >= 0.999 or epsilon >= 0.999 or sigma_A<=1e-5:
+            return (rho_l / rho_g)
         # --- 1. Calcul du paramètre de Martinelli (X) ---
         mu_g = IAPWS97(P=self.P[i]*1e-6, x=1).Vapor.mu
         mu_l = IAPWS97(P=self.P[i]*1e-6, x=0).Liquid.mu
@@ -642,6 +664,8 @@ class statesVariables():
     
     #Get the liquid velocity in a given cell
     def getUl(self, i):
+        if self.voidFractionTEMP[i] >= 0.999:
+            return self.U[i]
         return self.U[i] - (self.voidFractionTEMP[i] / ( 1 - self.voidFractionTEMP[i])) * (self.rhogTEMP[i] / self.rhoTEMP[i]) * self.VgjPrimeTEMP[i]
     
     #Get the vapor velocity in a given cell

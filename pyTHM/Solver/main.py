@@ -4,6 +4,7 @@
 
 from ..Conduction.conduction import HeatConductionInFuelPin as FDM_Fuel
 from ..Convection.convection import DFMclass
+from ..Convection.crossflow import compute_crossflow
 import numpy as np
 from iapws import IAPWS97
 import matplotlib.pyplot as plt
@@ -17,7 +18,9 @@ class pyTHM_solver:
                  canal_radius, fuel_radius, gap_radius, clad_radius, fuel_rod_length, tInlet, pOutlet, qFlow, Powtot, axial_p_form, fraction_pow_fuel,
                  k_fuel, H_gap, k_clad, I_z, I_f, I_c, plot_at_z, solveConduction,
                  dt, t_tot, frfaccorel = 'base', P2Pcorel = 'base', voidFractionCorrel = 'GEramp', numericalMethod= 'FVM', 
-                 porosities=None, acools=None, dhs=None, phs=None, kexp_profile=None, kcon_profile=None, rsin_profile=None):
+                 porosities=None, acools=None, dhs=None, phs=None, kexp_profile=None, kcon_profile=None, rsin_profile=None,
+                 acools_wr=None, porosities_wr=None, dhs_wr=None, kexp_wr=None, p_wr=None, rwall_wr=None,
+                 hole_z=None, hole_A=None, Idelchik_enter=None, Idelchik_exit=None):
         """
         Main constructor for THM case, first set of parameters correspond to canal properties, second set to fuel/gap/clad properties
         The structure followed is : 
@@ -90,10 +93,101 @@ class pyTHM_solver:
         print(f"Numerical Method {numericalMethod}")
         self.convection_sol = DFMclass(self.canal_type, self.I_z, self.tInlet, self.qFlow, self.pOutlet, self.Lf, self.r_f, self.clad_r, self.r_w, self.numericalMethod, self.frfaccorel, self.P2Pcorel, self.voidFractionCorrel, dt = self.dt, t_tot = self.t_end, porosities = porosities, acools=acools, dhs = dhs, phs = phs, kexp=kexp_profile, kcon=kcon_profile, rsin=rsin_profile)
         print(f'Hydraulic diameter: {self.convection_sol.D_h}')
-        # Set the fission power in the fuel rod
-        self.convection_sol.set_Fission_Power(self.Powtot, self.axial_pow_form, self.Fpow) # set the fission power in the fuel rod, given the total power, the axial power form factors and the fraction of power deposited in the fuel
-        # Resolve the DFM
-        self.convection_sol.resolveDFM()
+        
+        Dz_local = fuel_rod_length / I_z
+        z_cells = np.linspace(Dz_local/2, fuel_rod_length - Dz_local/2, I_z)
+        hole_z_indices = []
+        if hole_z is not None:
+            for z in hole_z:
+                idx = (np.abs(z_cells - z)).argmin()
+                hole_z_indices.append(idx)
+        else:
+            hole_A = []
+
+        alpha = 0.05 # Initial guess : 5% of global mass flow rate
+        alpha_prev = 0.04 
+        delta_P_prev = None
+
+        for secant_iter in range(15): # Max 15 essais pour équilibrer les pressions d'entrée
+            qFlow_wr = alpha * qFlow
+            qFlow_actif = (1 - alpha) * qFlow
+            
+            print(f"\n--- Sécante {secant_iter} : alpha = {alpha:.4f} (WR: {qFlow_wr:.2f} kg/s, Actif: {qFlow_actif:.2f} kg/s) ---")
+
+            v_lat_prev = np.zeros(len(hole_z_indices))
+            S_mass_a, S_mom_a, S_h_a = np.zeros(I_z+1), np.zeros(I_z+1), np.zeros(I_z+1)
+            S_mass_w, S_mom_w, S_h_w = np.zeros(I_z+1), np.zeros(I_z+1), np.zeros(I_z+1)
+
+            for ping_pong in range(10): 
+                
+                DFM_actif = DFMclass(canal_type, I_z, tInlet, qFlow_actif, pOutlet, fuel_rod_length, 
+                                     fuel_radius, clad_radius, canal_radius * 2.0, numericalMethod, 
+                                     frfaccorel, P2Pcorel, voidFractionCorrel,
+                                     dt=dt, t_tot=t_tot, porosities=porosities, acools=acools, 
+                                     dhs=dhs, phs=phs, kexp=kexp_profile, kcon=kcon_profile, rsin=rsin_profile)
+                DFM_actif.set_Fission_Power(Powtot, axial_p_form, fraction_pow_fuel)
+                DFM_actif.update_sources(S_mass_a, S_mom_a, S_h_a)
+                DFM_actif.resolveDFM()
+
+                kcon_wr_safe = np.zeros(I_z+1) if kexp_wr is None else np.zeros_like(kexp_wr)
+                rsin_wr_safe = np.ones(I_z+1) if kexp_wr is None else np.ones_like(kexp_wr)
+                
+                DFM_wr = DFMclass(canal_type, I_z, tInlet, qFlow_wr, pOutlet, fuel_rod_length, 
+                                  1e-5, 1e-5, canal_radius * 2.0, numericalMethod, 
+                                  frfaccorel, P2Pcorel, voidFractionCorrel,
+                                  dt=dt, t_tot=t_tot, porosities=porosities_wr, acools=acools_wr, 
+                                  dhs=dhs_wr, phs=p_wr, kexp=kexp_wr, kcon=kcon_wr_safe, rsin=rsin_wr_safe)
+                DFM_wr.set_Fission_Power(0.0, axial_p_form, fraction_pow_fuel)
+                DFM_wr.update_sources(S_mass_w, S_mom_w, S_h_w)
+                DFM_wr.resolveDFM()
+                
+                S_mass_a, S_mom_a, S_h_a, S_mass_w, S_mom_w, S_h_w, v_lat_new = compute_crossflow(
+                    DFM_actif, DFM_wr, hole_z_indices, hole_A, Idelchik_enter, Idelchik_exit, rwall_wr, v_lat_prev
+                )
+                if len(v_lat_new) > 0:
+                    error_v_lat = np.max(np.abs(v_lat_new - v_lat_prev))
+                else:
+                    error_v_lat = 0.0
+                v_lat_prev = np.copy(v_lat_new)
+
+                if error_v_lat < 1e-3:
+                    print(f"    Ping-Pong convergé en {ping_pong + 1} itérations (Erreur max: {error_v_lat:.4f} m/s)")
+                    break
+            
+            rho_in_a = DFM_actif.rhoL[-1][0]
+            U_in_a = DFM_actif.U[-1][0]
+            P_tot_actif = DFM_actif.P[-1][0] + 0.5 * rho_in_a * U_in_a**2
+            
+            rho_in_w = DFM_wr.rhoL[-1][0]
+            U_in_w = DFM_wr.U[-1][0]
+            P_tot_wr = DFM_wr.P[-1][0] + 0.5 * rho_in_w * U_in_w**2
+            
+            delta_P = P_tot_actif - P_tot_wr
+            
+            print(f"P_tot Actif: {P_tot_actif:.0f} Pa | P_tot WR: {P_tot_wr:.0f} Pa | Différence: {delta_P:.1f} Pa")           
+
+            if abs(delta_P) < 500.0:
+                print(">>> Convergence du débit d'entrée (alpha) atteinte !")
+                break
+
+            if delta_P_prev is not None:
+                if delta_P != delta_P_prev: # Sécurité mathématique
+                    derivative = (delta_P - delta_P_prev) / (alpha - alpha_prev)
+                    alpha_next = alpha - delta_P / derivative
+                    alpha_next = max(0.01, min(0.20, alpha_next))
+                else:
+                    alpha_next = alpha * 1.01
+            else:
+                alpha_next = 0.06 if delta_P > 0 else 0.04
+            
+            alpha_prev = alpha
+            delta_P_prev = delta_P
+            alpha = alpha_next
+        
+        self.convection_sol = DFM_actif
+        self.convection_wr = DFM_wr
+        self.alpha_final = alpha
+
         if self.solveConduction:
             self.Tsurf = self.convection_sol.compute_T_surf()
 

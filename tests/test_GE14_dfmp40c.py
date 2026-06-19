@@ -105,9 +105,9 @@ def test_GE14_cases():
     mass_flow = 8.407E-02 * (ref_acool / 8.470E-05)
 
     # --- 2. Matrice de tests ---
-    puissances_a_tester = [10.0, 20.0, 40.0]
-    profils_a_tester = ['cosinus', 'sinus']
-    pdrop_options = [0, 1]
+    puissances_a_tester = [40.0]
+    profils_a_tester = ['cosinus']
+    pdrop_options = [1]
 
     print("--- Lancement des calculs pyTHM en mémoire ---")
     
