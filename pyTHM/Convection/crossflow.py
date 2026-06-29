@@ -93,7 +93,7 @@ def compute_crossflow(DFM_actif, DFM_wr, hole_z_indices, hole_A, Idelchik_enter,
         # --- Mini-Boucle locale de convergence pour Idelchik ---
         v_lat = v_lat_prev[idx] if v_lat_prev[idx] > 0.01 else 1.0 # Initial guess
         for _ in range(5): # 5 itérations suffisent généralement à converger
-            ratio = abs(abs(v_aval) - abs(v_amont)) / v_lat
+            ratio = abs(abs(v_aval) - abs(v_amont)) / max(abs(v_lat),1e-10)
             # Interpolation dans les tables
             K_sing = np.interp(ratio, table_X, table_Y)
             

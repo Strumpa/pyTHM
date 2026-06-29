@@ -142,11 +142,11 @@ class DFMclass():
 
         self.epsInnerIteration = 1e-4
         self.maxInnerIteration = 1000
-        if self.numericalMethod == 'BiCGStab' or self.numericalMethod == 'BiCG':
+        if self.numericalMethod == 'BiCGStab' or self.numericalMethod == 'BiCG' or self.numericalMethod == 'FVM':
             self.sousRelaxFactor = 0.8
         else:
             self.sousRelaxFactor = 1
-        self.epsOuterIteration = 1e-4
+        self.epsOuterIteration = 5e-4
         self.maxOuterIteration = 1000
 
         #Universal constant
@@ -356,8 +356,8 @@ class DFMclass():
                 VAR_VFM_Class.set_ADi(self.nFaces, 
                 ci = 0,
                 ai = - areaMatrix[i],
-                bi = areaMatrix[i+1],
-                di = - (((rho_old[i+1]+ rho_old[i])* self.g/2) * self.DV[i%self.nFaces] * ((self.poro[i%self.nFaces]+ self.poro[(i+1)%self.nFaces])/2) / 2) + DI + self.S_mom[i%self.nFaces])
+                bi = areaMatrix[i],
+                di = - (((rho_old[i+1]+ rho_old[i])* self.g/2) * self.DV[i%self.nFaces] / 2) + DI + self.S_mom[i%self.nFaces])
             
                 VAR_VFM_Class.fillingOutsideBoundary(i, i-self.nFaces,
                 ai = - rho_old[i]*VAR_old[i-self.nFaces]*areaMatrix_old_2[i],
@@ -367,8 +367,8 @@ class DFMclass():
                 DI = -((epsilon_old[i+1] * rho_g_old[i+1] * rho_l_old[i+1] * V_gj_old[i+1]**2 * areaMatrix[i+1] )/ ((1 - epsilon_old[i+1])*rho_old[i+1]) )  + ((epsilon_old[i] * rho_g_old[i] * rho_l_old[i] * V_gj_old[i]**2 * areaMatrix[i] )/ ((1 - epsilon_old[i])*rho_old[i]) )     
                 VAR_VFM_Class.set_ADi(i, ci = 0,
                 ai = - areaMatrix[i],
-                bi = areaMatrix[i+1],
-                di = - (((rho_old[i+1]+ rho_old[i])* self.g/2) * self.DV[i%self.nFaces] * ((self.poro[i%self.nFaces]+ self.poro[(i+1)%self.nFaces])/2)/ 2) + DI + self.S_mom[i%self.nFaces])
+                bi = areaMatrix[i],
+                di = - (((rho_old[i+1]+ rho_old[i])* self.g/2) * self.DV[i%self.nFaces] / 2) + DI + self.S_mom[i%self.nFaces])
             
                 VAR_VFM_Class.fillingOutsideBoundary(i, i-self.nFaces,
                 ai = - rho_old[i]*VAR_old[i-self.nFaces]*areaMatrix_old_2[i],
@@ -507,8 +507,8 @@ class DFMclass():
                 VAR_VFM_Class.set_ADi(self.nFaces, 
                 ci = 0,
                 ai = - areaMatrix[i],
-                bi = areaMatrix[i+1],
-                di = - ((rho_old[i+1]+ rho_old[i])* self.g * self.DV[i%self.nFaces] * ((self.poro[i%self.nFaces]+ self.poro[(i+1)%self.nFaces])/2) / 2) + DI + (self.rhoList[self.timeCount][i%self.nFaces] * areaMatrix[i] * self.velocityList[self.timeCount][i%self.nFaces] * (self.Dz / self.dt))+self.S_mom[i%self.nFaces])
+                bi = areaMatrix[i],
+                di = - ((rho_old[i+1]+ rho_old[i])* self.g * self.DV[i%self.nFaces] / 2) + DI + (self.rhoList[self.timeCount][i%self.nFaces] * areaMatrix[i] * self.velocityList[self.timeCount][i%self.nFaces] * (self.Dz / self.dt))+self.S_mom[i%self.nFaces])
             
                 VAR_VFM_Class.fillingOutsideBoundary(i, i-self.nFaces,
                 ai = - rho_old[i]*VAR_old[i-self.nFaces]*areaMatrix_old_2[i] + rho_old[i]*areaMatrix[i]*(self.Dz/self.dt),
@@ -518,8 +518,8 @@ class DFMclass():
                 DI = -((epsilon_old[i+1] * rho_g_old[i+1] * rho_l_old[i+1] * V_gj_old[i+1]**2 * areaMatrix[i+1] )/ ((1 - epsilon_old[i+1])*rho_old[i+1]) )  + ((epsilon_old[i] * rho_g_old[i] * rho_l_old[i] * V_gj_old[i]**2 * areaMatrix[i] )/ ((1 - epsilon_old[i])*rho_old[i]) )     
                 VAR_VFM_Class.set_ADi(i, ci = 0,
                 ai = - areaMatrix[i],
-                bi = areaMatrix[i+1],
-                di = - ((rho_old[i+1]+ rho_old[i])* self.g * self.DV[i%self.nFaces] * ((self.poro[i%self.nFaces]+ self.poro[(i+1)%self.nFaces])/2)/ 2) + DI + (self.rhoList[self.timeCount][i%self.nFaces] * areaMatrix[i] * self.velocityList[self.timeCount][i%self.nFaces] * (self.Dz / self.dt))+self.S_mom[i%self.nFaces])
+                bi = areaMatrix[i],
+                di = - ((rho_old[i+1]+ rho_old[i])* self.g * self.DV[i%self.nFaces] / 2) + DI + (self.rhoList[self.timeCount][i%self.nFaces] * areaMatrix[i] * self.velocityList[self.timeCount][i%self.nFaces] * (self.Dz / self.dt))+self.S_mom[i%self.nFaces])
             
                 VAR_VFM_Class.fillingOutsideBoundary(i, i-self.nFaces,
                 ai = - rho_old[i]*VAR_old[i-self.nFaces]*areaMatrix_old_2[i] + rho_old[i]*areaMatrix[i]*(self.Dz/self.dt),
@@ -537,6 +537,7 @@ class DFMclass():
     def testConvergence(self, k):#change rien et return un boolean
         print(f'Convergence test number {k}, RES: errEPS: {self.EPSresiduals[-1]}, errRHO: {self.rhoResiduals[-1]}, errQua: {self.xThResiduals[-1]}')
         if self.EPSresiduals[-1] < self.epsOuterIteration and self.rhoResiduals[-1] < self.epsOuterIteration: #and self.xThResiduals[-1] < 1e-3 :
+            #print(f'Convergence test number {k}, RES: errEPS: {self.EPSresiduals[-1]}, errRHO: {self.rhoResiduals[-1]}, errQua: {self.xThResiduals[-1]}')
             return True
         else:
             return False

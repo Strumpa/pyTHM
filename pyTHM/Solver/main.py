@@ -118,7 +118,7 @@ class pyTHM_solver:
             S_mass_a, S_mom_a, S_h_a = np.zeros(I_z+1), np.zeros(I_z+1), np.zeros(I_z+1)
             S_mass_w, S_mom_w, S_h_w = np.zeros(I_z+1), np.zeros(I_z+1), np.zeros(I_z+1)
 
-            for ping_pong in range(10): 
+            for ping_pong in range(40): 
                 
                 DFM_actif = DFMclass(canal_type, I_z, tInlet, qFlow_actif, pOutlet, fuel_rod_length, 
                                      fuel_radius, clad_radius, canal_radius * 2.0, numericalMethod, 
@@ -141,30 +141,60 @@ class pyTHM_solver:
                 DFM_wr.update_sources(S_mass_w, S_mom_w, S_h_w)
                 DFM_wr.resolveDFM()
                 
-                S_mass_a, S_mom_a, S_h_a, S_mass_w, S_mom_w, S_h_w, v_lat_new = compute_crossflow(
+                S_mass_a_new, S_mom_a_new, S_h_a_new, S_mass_w_new, S_mom_w_new, S_h_w_new, v_lat_new = compute_crossflow(
                     DFM_actif, DFM_wr, hole_z_indices, hole_A, Idelchik_enter, Idelchik_exit, rwall_wr, v_lat_prev
                 )
+                v_lat_new = np.clip(v_lat_new, -80.0, 80.0) 
                 if len(v_lat_new) > 0:
                     error_v_lat = np.max(np.abs(v_lat_new - v_lat_prev))
                 else:
                     error_v_lat = 0.0
-                v_lat_prev = np.copy(v_lat_new)
 
-                if error_v_lat < 1e-3:
+                if error_v_lat < 1e-2:
                     print(f"    Ping-Pong convergé en {ping_pong + 1} itérations (Erreur max: {error_v_lat:.4f} m/s)")
                     break
+                print(f"    Ping-Pong iter {ping_pong+1}: error = {error_v_lat:.4f} m/s, v_lat_prev = {v_lat_prev} m/s, v_lat_new = {v_lat_new} m/s")
+                omega = 0.1
+                if ping_pong == 0:
+                    v_lat_prev = omega*v_lat_new
+                    S_mass_a = omega*S_mass_a_new
+                    S_mom_a = omega*S_mom_a_new
+                    S_h_a = omega*S_h_a_new
+                    S_mass_w = omega*S_mass_w_new
+                    S_mom_w = omega*S_mom_w_new
+                    S_h_w = omega*S_h_w_new
+                else:
+                    v_lat_prev = omega*v_lat_new + (1-omega)*v_lat_prev
+                    S_mass_a = omega*S_mass_a_new + (1-omega)*S_mass_a
+                    S_mom_a = omega*S_mom_a_new + (1-omega)*S_mom_a
+                    S_h_a = omega*S_h_a_new + (1-omega)*S_h_a
+                    S_mass_w = omega*S_mass_w_new + (1-omega)*S_mass_w
+                    S_mom_w = omega*S_mom_w_new + (1-omega)*S_mom_w
+                    S_h_w = omega*S_h_w_new + (1-omega)*S_h_w
+                
             
+            K_local_orifice = 1.42
             rho_in_a = DFM_actif.rhoL[-1][0]
             U_in_a = DFM_actif.U[-1][0]
-            P_tot_actif = DFM_actif.P[-1][0] + 0.5 * rho_in_a * U_in_a**2
-            
+            P_in_actif = DFM_actif.P[-1][0] 
+            r_seo = 0.026 # Side entry orifice radius
+            A_seo = np.pi * r_seo**2
+            K_orifice_actif = K_local_orifice * (DFM_actif.areaMatrix[0] / A_seo)**2
+            DeltaP_orifice_actif = 0.5 * rho_in_a * U_in_a**2 * K_orifice_actif
+            P_plenum_actif = P_in_actif + DeltaP_orifice_actif
+
             rho_in_w = DFM_wr.rhoL[-1][0]
             U_in_w = DFM_wr.U[-1][0]
-            P_tot_wr = DFM_wr.P[-1][0] + 0.5 * rho_in_w * U_in_w**2
+            P_in_wr = DFM_wr.P[-1][0] 
+            r_gicleur_wr = 0.0030
+            A_gicleur = np.pi * r_gicleur_wr**2
+            K_orifice_wr = K_local_orifice * (DFM_wr.areaMatrix[0] / (2*A_gicleur))**2
+            DeltaP_orifice_wr = 0.5 * rho_in_w * U_in_w**2 * K_orifice_wr
+            P_plenum_wr = P_in_wr + DeltaP_orifice_wr
             
-            delta_P = P_tot_actif - P_tot_wr
+            delta_P = P_plenum_actif - P_plenum_wr
             
-            print(f"P_tot Actif: {P_tot_actif:.0f} Pa | P_tot WR: {P_tot_wr:.0f} Pa | Différence: {delta_P:.1f} Pa")           
+            print(f"P_plenum Actif: {P_plenum_actif:.0f} Pa | P_plenum WR: {P_plenum_wr:.0f} Pa | Différence: {delta_P:.1f} Pa")           
 
             if abs(delta_P) < 500.0:
                 print(">>> Convergence du débit d'entrée (alpha) atteinte !")

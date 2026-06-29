@@ -152,7 +152,7 @@ def test_GE14_cases():
                     frfaccorel=frfaccorel_choice,
                     P2Pcorel='lockhartMartinelli', 
                     voidFractionCorrel='EPRIvoidModel', 
-                    numericalMethod="BiCG",
+                    numericalMethod="FVM",
                     porosities=porosities_profile,
                     acools=acool_profile,
                     dhs=dhs_profile,
@@ -166,8 +166,8 @@ def test_GE14_cases():
                     kexp_wr=kexp_wr,
                     p_wr=p_wr,
                     rwall_wr=rwall_wr,
-                    hole_z=[],
-                    hole_A=[],
+                    hole_z=hole_z,
+                    hole_A=hole_A,
                     Idelchik_enter=Idelchik_enter,
                     Idelchik_exit=Idelchik_exit
                 )
