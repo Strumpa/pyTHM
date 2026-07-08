@@ -19,7 +19,7 @@ def generer_nom_cas(pdrop, power_kw, type_profil):
     if type_profil.lower() in ['cosinus', 'cos', 'c']: nom += "c"
     elif type_profil.lower() in ['sinus', 'sin', 's']: nom += "s"
     else: nom += "u"
-    nom += "_v"
+    nom += "_no_holes_v"
     return nom
 
 def generer_profil_puissance(type_profil, nz):
@@ -150,7 +150,7 @@ def test_GE14_cases():
                     dt=0,
                     t_tot=0,
                     frfaccorel=frfaccorel_choice,
-                    P2Pcorel='lockhartMartinelli', 
+                    P2Pcorel='friedel', 
                     voidFractionCorrel='Hibiki_Al-Saif', 
                     numericalMethod="FVM",
                     porosities=porosities_profile,
@@ -166,8 +166,8 @@ def test_GE14_cases():
                     kexp_wr=kexp_wr,
                     p_wr=p_wr,
                     rwall_wr=rwall_wr,
-                    hole_z=hole_z,
-                    hole_A=hole_A,
+                    hole_z=[],
+                    hole_A=[],
                     Idelchik_enter=Idelchik_enter,
                     Idelchik_exit=Idelchik_exit
                 )

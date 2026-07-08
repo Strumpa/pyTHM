@@ -7,7 +7,84 @@
 
 import numpy as np
 from iapws import IAPWS97
+from scipy.interpolate import RectBivariateSpline
+from pyTHM.Lissage.smooth import if_lisse, max_lisse, min_lisse
 
+class FastIAPWS:
+    """
+    Générateur de Look-Up Tables 1D (Saturation) et 2D (Sous-refroidi).
+    """
+    def __init__(self):
+        print("--- Initialisation des tables thermodynamiques (IAPWS97) ---")
+        # --- 1. TABLES DE SATURATION 1D (Pression uniquement) ---
+        self.P_arr = np.linspace(6.5, 7.5, 200) # MPa
+        
+        self.Tsat, self.hl, self.hg = np.zeros(200), np.zeros(200), np.zeros(200)
+        self.rhol, self.rhog = np.zeros(200), np.zeros(200)
+        self.mul, self.mug = np.zeros(200), np.zeros(200)
+        self.sigma = np.zeros(200)
+        self.cpl, self.cpg = np.zeros(200), np.zeros(200)
+        self.kl, self.kg = np.zeros(200), np.zeros(200)
+        
+        for i, p in enumerate(self.P_arr):
+            liq = IAPWS97(P=p, x=0)
+            vap = IAPWS97(P=p, x=1)
+            self.Tsat[i] = liq.T
+            self.hl[i] = liq.h
+            self.hg[i] = vap.h
+            self.rhol[i] = liq.rho
+            self.rhog[i] = vap.rho
+            self.mul[i] = liq.mu
+            self.mug[i] = vap.mu
+            self.sigma[i] = liq.sigma
+            self.cpl[i] = liq.cp
+            self.cpg[i] = vap.cp
+            self.kl[i] = liq.k
+            self.kg[i] = vap.k
+            
+        # --- 2. TABLES SOUS-REFROIDIES 2D (Pression ET Enthalpie) ---
+        print("--- Génération des surfaces 2D (P, H)... ---")
+        self.P_sub_arr = np.linspace(6.5, 7.5, 50)     # Grille de Pression
+        self.H_sub_arr = np.linspace(300.0, 1600.0, 200) # Grille d'Enthalpie
+        
+        rhol_sub_2d = np.zeros((50, 200))
+        T_sub_2d = np.zeros((50, 200))
+        
+        for i, p in enumerate(self.P_sub_arr):
+            for j, h_val in enumerate(self.H_sub_arr):
+                state = IAPWS97(P=p, h=h_val)
+                rhol_sub_2d[i, j] = state.rho
+                T_sub_2d[i, j] = state.T
+                
+        # Création des fonctions d'interpolation 2D ultra-rapides en C
+        self.rhol_sub_spline = RectBivariateSpline(self.P_sub_arr, self.H_sub_arr, rhol_sub_2d)
+        self.T_sub_spline = RectBivariateSpline(self.P_sub_arr, self.H_sub_arr, T_sub_2d)
+            
+        print("--- Tables IAPWS générées avec succès ! ---")
+
+    # Méthodes d'accès 1D
+    def get_Tsat(self, P): return np.interp(P, self.P_arr, self.Tsat)
+    def get_hl(self, P): return np.interp(P, self.P_arr, self.hl)
+    def get_hg(self, P): return np.interp(P, self.P_arr, self.hg)
+    def get_rhol(self, P): return np.interp(P, self.P_arr, self.rhol)
+    def get_rhog(self, P): return np.interp(P, self.P_arr, self.rhog)
+    def get_mul(self, P): return np.interp(P, self.P_arr, self.mul)
+    def get_mug(self, P): return np.interp(P, self.P_arr, self.mug)
+    def get_sigma(self, P): return np.interp(P, self.P_arr, self.sigma)
+    def get_cpl(self, P): return np.interp(P, self.P_arr, self.cpl)
+    def get_cpg(self, P): return np.interp(P, self.P_arr, self.cpg)
+    def get_kl(self, P): return np.interp(P, self.P_arr, self.kl)
+    def get_kg(self, P): return np.interp(P, self.P_arr, self.kg)
+    
+    # Méthodes d'accès 2D (grid=False force l'évaluation point par point)
+    def get_sub_rhol(self, P, H): 
+        # On utilise np.ravel()[0] pour être certain de renvoyer un scalaire pur
+        return np.ravel(self.rhol_sub_spline(P, H, grid=False))[0]
+        
+    def get_sub_T(self, P, H): 
+        return np.ravel(self.T_sub_spline(P, H, grid=False))[0]
+
+FAST_IAPWS = FastIAPWS()
 
 class statesVariables():
 
@@ -48,7 +125,7 @@ class statesVariables():
     - getReynoldsNumber(i): Computes the Reynolds number for flow in a given cell.
     """
 
-    def __init__(self, U, P, H, voidFraction, D_h, areaMatrix, poro, DV, voidFractionCorrel, frfaccorel, P2Pcorel, Dz, q__, qFlow, rf, rw, kexp, kcon, rsin):
+    def __init__(self, U, P, H, voidFraction, D_h, areaMatrix, poro, DV, voidFractionCorrel, frfaccorel, P2Pcorel, Dz, q__, phs, qFlow, rf, rw, kexp, kcon, rsin):
         
         self.nCells = len(U)
         self.U = U
@@ -66,6 +143,7 @@ class statesVariables():
         self.Dz = Dz
         self.DV = DV
         self.q__ = q__
+        self.phs = phs
         self.qFlow = qFlow
         self.rf = rf
         self.rw = rw
@@ -108,6 +186,9 @@ class statesVariables():
 
         elif self.voidFractionCorrel == 'EPRIvoidModel':
             self.EPRIvoidModel()
+        
+        elif self.voidFractionCorrel == 'Hibiki_Al-Saif':
+            self.Hibiki_Al_Saif()
         else:
             raise ValueError('Invalid void fraction correlation model')
 
@@ -253,12 +334,54 @@ class statesVariables():
             self.Ug[i] = self.getUg(i)
             self.Rel[i] = self.getReynoldsNumberLiquidD5(i)
 
+    def Hibiki_Al_Saif(self):
+        # 1. Initialisation des tableaux
+        self.rholTEMP, self.rhogTEMP, self.rhoTEMP, self.voidFractionTEMP, self.DhfgTEMP, self.fTEMP, self.areaMatrix_1TEMP, self.areaMatrix_2TEMP, self.areaMatrix_2TEMP, self.VgjTEMP, self.C0TEMP, self.VgjPrimeTEMP = np.ones(self.nCells), np.ones(self.nCells), np.ones(self.nCells), np.ones(self.nCells), np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells)
+        self.voidFractionOld = self.voidFraction
+        self.Ul = np.ones(self.nCells)
+        self.Ug = np.ones(self.nCells)
+        self.Rel = np.ones(self.nCells)
+        
+        for i in range(self.nCells):
+            # 2. Extraction des densités pures (briques de base)
+            self.rholTEMP[i], self.rhogTEMP[i], self.rhoTEMP[i] = self.getDensity(i)
+            self.DhfgTEMP[i] = self.getHfg(i)
+            
+            # 3. Calcul de C0 et Vgj (Ils ne dépendent plus que de G, x et rho !)
+            self.C0TEMP[i] = self.getC0(i)
+            self.VgjTEMP[i] = self.getVgj(i)
+            
+            # 4. Déduction de la fraction de vide (via l'équation DFM standard)
+            voidFractionNew = self.getVoidFraction(i)
+            
+            # Sécurité numérique sur le taux de vide
+            if voidFractionNew < 0.0:
+                voidFractionNew = 0.0
+            elif voidFractionNew > 0.999:
+                voidFractionNew = 0.999
+            self.voidFractionTEMP[i] = voidFractionNew
+            
+            # 5. Calcul de la densité du mélange maintenant qu'on a le taux de vide
+            self.rhoTEMP[i] = self.getDensity(i)[2]
+            
+            # 6. Déduction des produits dérivés (Vitesses des phases)
+            self.VgjPrimeTEMP[i] = self.getVgj_prime(i)
+            self.Ul[i] = self.getUl(i)
+            self.Ug[i] = self.getUg(i)
+            
+            # 7. Clôture des paramètres hydrauliques
+            self.fTEMP[i] = self.getFrictionFactor(i)
+            self.areaMatrix_1TEMP[i], self.areaMatrix_2TEMP[i] = self.getAreas(i)
+            self.Rel[i] = self.getReynoldsNumberLiquidD5(i)
+
     #Get the density of the liquid and vapor phases for a given cell
     def getDensity(self, i):
-        vapor = IAPWS97(P = self.P[i]*(10**(-6)), x = 1)
-        liquid = IAPWS97(P = self.P[i]*(10**(-6)), x = 0)
-        rho_g = vapor.rho
-        rho_l = liquid.rho
+        P = self.P[i]
+        H = self.H[i]
+        hl, hg = self.getPhasesEnthalpy(i)
+        H_liq_eval = min_lisse(H*(10**(-3)), hl, 0.5)
+        rho_g = FAST_IAPWS.get_rhog(P*(10**(-6)))
+        rho_l = FAST_IAPWS.get_sub_rhol(P*(10**-6), H_liq_eval)
         rho = rho_l * (1 - self.voidFractionTEMP[i]) + rho_g * self.voidFractionTEMP[i]
         return rho_l, rho_g, rho
     
@@ -267,16 +390,11 @@ class statesVariables():
         correl = "simple"
         if correl == 'simple':
             hl, hg = self.getPhasesEnthalpy(i)
-            H = self.H[i]
-            hfg = IAPWS97(P = self.P[i]*(10**(-6)), x = 0).h
-            if H*0.001 < hl:
-                x = (H*0.001 - hl)/(hg - hl)
-                return 0
-            elif H*0.001 > hg:
-                return 1
-            
-            elif H*0.001 <= hg and H*0.001 >= hl:
-                return (H*0.001 - hl)/(hg - hl)
+            H = self.H[i] * 0.001
+            x_raw = (H - hl)/(hg - hl)
+            x_borne_sup = min_lisse(1.0, x_raw, 1e-4)
+            x_final = max_lisse(0.0, x_borne_sup, 1e-4)
+            return x_final
         
         elif correl == 'EPRI':
             epriCorrel = '1'
@@ -296,11 +414,11 @@ class statesVariables():
                     rhol = self.rholTEMP[i]
                     rhog = self.rhogTEMP[i]
                     u = self.U[i]
-                    muf = IAPWS97(P = p*(10**(-6)), x = 1).mu
+                    muf = FAST_IAPWS.get_mug(p*(10**(-6)))
                     Re = rhol * abs(u) * self.D_h[i] / muf
 
-                    Cpf = IAPWS97(P = p*(10**(-6)), x = 1).cp
-                    k_f = IAPWS97(P = p*(10**(-6)), x = 1).k
+                    Cpf = FAST_IAPWS.get_cpg(p*(10**(-6)))
+                    k_f = FAST_IAPWS.get_kg(p*(10**(-6)))
                     Pr = Cpf * muf / k_f
 
                 
@@ -366,7 +484,8 @@ class statesVariables():
             x_th = self.xThTEMP[i]
             rho_l = self.rholTEMP[i]
             rho_g = self.rhogTEMP[i]
-            u = self.U[i]
+            rho_m = self.rhoTEMP[i]
+            u = abs(self.U[i])
             V_gj = self.VgjTEMP[i]
             C0 = self.C0TEMP[i]
             if x_th == 0:
@@ -374,7 +493,7 @@ class statesVariables():
             elif x_th == 1:
                 return 0.99
             else:
-                return x_th / (C0 * (x_th + (rho_g / rho_l) * (1 - x_th)) + (rho_g * V_gj) / (rho_l * u))
+                return x_th / (C0 * (x_th + (rho_g / rho_l) * (1 - x_th)) + (rho_g * V_gj) / (rho_m * u))
     
     #Get the drift velocity for a given cell based on the selected void fraction correlation
     def getVgj(self, i):
@@ -384,7 +503,7 @@ class statesVariables():
             if self.rholTEMP[i] == 0:
                 return 0
             
-            sigma = IAPWS97(P = self.P[i]*(10**(-6)), x = 0).sigma
+            sigma = FAST_IAPWS.get_sigma(self.P[i]*(10**(-6)))
             if sigma == 0:
                 return 0
             
@@ -407,12 +526,57 @@ class statesVariables():
                 return 0
             if self.rholTEMP[i] == 0:
                 return 0
-            sigma = IAPWS97(P = self.P[i]*(10**(-6)), x = 0).sigma
+            sigma = FAST_IAPWS.get_sigma(self.P[i]*(10**(-6)))
             Vgj = (np.sqrt(2)*(self.g * sigma * (self.rholTEMP[i] - self.rhogTEMP[i]) / self.rholTEMP[i]**2)**0.25) * (1 + self.voidFractionTEMP[i])**(3/2)
             return Vgj
         
         if self.voidFractionCorrel == 'HEM1':
             return 0
+        
+        if self.voidFractionCorrel == 'Hibiki_Al-Saif':
+            P = self.P[i]
+            H = self.H[i]
+            hl, hg = self.getPhasesEnthalpy(i)
+            T = FAST_IAPWS.get_sub_T(P*(10**(-6)), H*10**(-3))
+            Tsat = FAST_IAPWS.get_Tsat(P*(10**(-6)))
+            DTSUB = self.getDTSUB(i)
+            H_kJ = H*10**(-3)
+            G = self.rhoTEMP[i]*abs(self.U[i])
+            x = self.xThTEMP[i]
+            rho_g = self.rhogTEMP[i]
+            rho_l = self.rholTEMP[i]
+            D_h = self.D_h[i]
+            mul = FAST_IAPWS.get_mul(P*(10**(-6)))
+            Re = max(1e-4, G*D_h/mul)
+            sigma = FAST_IAPWS.get_sigma(P*(10**(-6)))
+            C_inf = 1.393 - 0.015*np.log(Re)
+            eps_tran = (1 + 4*rho_g/rho_l)*np.sqrt(rho_l/rho_g)/(C_inf*(C_inf-1)) - 4*rho_g/rho_l
+            La = (sigma/(rho_l-rho_g*self.g))**0.5
+            N_mul = mul/(rho_l*sigma*La)**(0.5)
+            N_rho = rho_g/rho_l
+            Dh_ratio = D_h/La
+            if N_mul <= 2*10**(-3):
+                if Dh_ratio <= 30:
+                    Vgj_KI_plus = 0.019*Dh_ratio**(0.809)*N_rho**(-0.157*N_mul**(-0.562))
+                else:
+                    Vgj_KI_plus = 0.030*N_rho**(-0.157*N_mul**(-0.562))
+            else:
+                if Dh_ratio >= 30:
+                    Vgj_KI_plus = 0.92*N_rho**(-0.157)
+                else:
+                    Vgj_KI_plus = 0
+            plus = ((rho_l-rho_g)*self.g*sigma/rho_l**2)**0.25
+            jg_plus = (G*x)/(rho_g*plus)
+            jl_plus = (G*(1-x))/(rho_l*plus)
+            j_plus = jg_plus + jl_plus
+            denomin_KI = self.getC0(i)*j_plus + Vgj_KI_plus
+            alpha_KI = jg_plus / denomin_KI if denomin_KI > 1e-5 else 0.0
+            Vgj_plus = np.sqrt(2)*(1-alpha_KI)**(1.75)*np.exp(-60.63*alpha_KI**(2.367)) + Vgj_KI_plus*(1-np.exp(-60.63*alpha_KI**(2.367)))
+            Vgj_bubbly = Vgj_plus * plus
+            Vgj_slug = 0.193*(self.g *  sigma *(rho_l-rho_g) / rho_l**2)**0.25
+            Vgj_diphasique = if_lisse(self.voidFractionTEMP[i], eps_tran, 0.05, Vgj_slug, Vgj_bubbly)
+            Vgj_final = if_lisse(T, Tsat-DTSUB, 0.5, Vgj_diphasique, 0.0)
+            return Vgj_final
             
     #Get the distribution parameter for a given cell based on the selected correlation model
     def getC0(self, i):
@@ -452,6 +616,31 @@ class statesVariables():
 
         if self.voidFractionCorrel == 'HEM1':
             return 1
+        
+        if self.voidFractionCorrel == 'Hibiki_Al-Saif':
+            G = self.rhoTEMP[i] * abs(self.U[i])
+            x = self.xThTEMP[i] 
+            rho_g = self.rhogTEMP[i]
+            rho_l = self.rholTEMP[i]
+            N_rho = rho_g/rho_l
+            P = self.P[i]
+            sigma = FAST_IAPWS.get_sigma(P*(10**(-6)))
+            plus = ((rho_l-rho_g)*self.g*sigma/rho_l**2)**0.25
+            jg_plus = (G*x)/(rho_g*plus)
+            jl_plus = (G*(1-x))/(rho_l*plus)
+            j_plus = jg_plus + jl_plus
+            alpha_CT = jg_plus/((1.2-0.2*N_rho**0.5)*j_plus+np.sqrt(2))
+            hl, hg = self.getPhasesEnthalpy(i)
+            H = self.H[i]*10**(-3)
+            T = FAST_IAPWS.get_sub_T(P*(10**(-6)), H)
+            Tsat = FAST_IAPWS.get_Tsat(P*(10**(-6)))
+            DTSUB = self.getDTSUB(i)
+            C0_liq = 1.0
+            C0_sat = 1.2 - 0.2 * N_rho**0.5
+            C0_sub = C0_sat * (1 - np.exp(-18*alpha_CT))
+            C0_trans = if_lisse(T, Tsat - DTSUB, 0.5, C0_sub, C0_liq)
+            C0_final = if_lisse(H, hl, 5.0, C0_sat, C0_trans)
+            return C0_final
             
     #Get the drift velocity for a given cell based on the selected void fraction correlation
     def getVgj_prime(self, i):
@@ -462,9 +651,9 @@ class statesVariables():
         return Vgj_prime
     
     def getHfg(self, i):
-        vapor = IAPWS97(P = self.P[i]*(10**(-6)), x = 1)
-        liquid = IAPWS97(P = self.P[i]*(10**(-6)), x = 0)
-        return (vapor.h - liquid.h)
+        hg = FAST_IAPWS.get_hg(self.P[i]*(10**(-6)))
+        hl = FAST_IAPWS.get_hl(self.P[i]*(10**(-6)))
+        return (hg - hl)
     
     def getFrictionFactor(self, i):
         U = self.U[i]
@@ -516,7 +705,7 @@ class statesVariables():
         elif self.P2Pcorel == 'HEM1': #Validated
             phi2phi = (rho/rho_l)*((rho_l/rho_g)*x_th + +1)
         elif self.P2Pcorel == 'HEM2': #Validated    
-            m = IAPWS97(P = P*(10**(-6)), x = 0).mu / IAPWS97(P = P*(10**(-6)), x = 1).mu
+            m = FAST_IAPWS.get_mul(P*(10**(-6))) / FAST_IAPWS.get_mug(P*(10**(-6)))
             phi2phi = (rho/rho_l)*((m-1)*x_th + 1)*((rho_l/rho_g)*x_th + +1)**(0.25)
         elif self.P2Pcorel == 'MNmodel': #Validated
             phi2phi = (1.2 * (rho_l/rho_g -1)*x_th**(0.824) + 1)*(rho/rho_l)
@@ -558,8 +747,8 @@ class statesVariables():
         if x >= 0.999 or epsilon >= 0.999 or sigma_A<=1e-5:
             return (rho_l / rho_g)
         # --- 1. Calcul du paramètre de Martinelli (X) ---
-        mu_g = IAPWS97(P=self.P[i]*1e-6, x=1).Vapor.mu
-        mu_l = IAPWS97(P=self.P[i]*1e-6, x=0).Liquid.mu
+        mu_g = FAST_IAPWS.get_mug(self.P[i]*1e-6)
+        mu_l = FAST_IAPWS.get_mul(self.P[i]*1e-6)
         X_LM = ((1 - x) / x)**0.9 * (rho_g / rho_l)**0.5 * (mu_g / mu_l)**0.1
         
         # --- 2. Calcul de K_o ---
@@ -622,9 +811,7 @@ class statesVariables():
     #Get the enthalpy values for the liquid and vapor phases at a given pressure
     def getPhasesEnthalpy(self, i):
         P = self.P[i]
-        vapor = IAPWS97(P = P*(10**(-6)), x = 1)
-        liquid = IAPWS97(P = P*(10**(-6)), x = 0)
-        return liquid.h, vapor.h
+        return FAST_IAPWS.get_hl(P*(10**(-6))), FAST_IAPWS.get_hg(P*(10**(-6)))
     
     #Get the Reynolds number for flow in a given cell
     def getReynoldsNumber(self, i):
@@ -632,8 +819,8 @@ class statesVariables():
         rho = self.rhoTEMP[i]
         P = self.P[i]
         alpha = self.voidFractionTEMP[i]
-        ml = IAPWS97(P = P*(10**(-6)), x = 0).mu
-        mv = IAPWS97(P = P*(10**(-6)), x = 1).mu
+        ml = FAST_IAPWS.get_mul(P*(10**(-6)))
+        mv = FAST_IAPWS.get_mug(P*(10**(-6)))
         m = (mv * ml) / ( ml * (1 - alpha) + mv * alpha )
         
         return rho * abs(U) * self.D_h[i] / m
@@ -643,23 +830,30 @@ class statesVariables():
         Ul = self.getUl(i)
         rho = self.rholTEMP[i]
         P = self.P[i]
-        m = IAPWS97(P = P*(10**(-6)), x = 0).mu
+        m = FAST_IAPWS.get_mul(P*(10**(-6)))
         return rho * abs(Ul) * self.D_h[i] / m
     
     def getReynoldsNumberLiquidD5(self, i):
         Um = self.U[i]
-        rhom = self.rholTEMP[i]
+        rhom = self.rhoTEMP[i]
         P = self.P[i]
         xfl = self.getQuality(i)
-        m = IAPWS97(P = P*(10**(-6)), x = 0).Liquid.mu
+        m = FAST_IAPWS.get_mul(P*(10**(-6)))
         return rhom * abs(Um) * self.D_h[i] * (1-xfl) / m
+
+    def getReynoldsNumberLiquidOnly(self, i):
+        Um = self.U[i]
+        rhom = self.rhoTEMP[i]
+        P = self.P[i]
+        m = FAST_IAPWS.get_mul(P*(10**(-6)))
+        return rhom * abs(Um) * self.D_h[i] / m
 
     #Get the Reynolds number for the vapor phase in a given cell
     def getReynoldsNumberVapor(self, i):
         Ug = self.getUg(i)
         rho = self.rhogTEMP[i]
         P = self.P[i]
-        m = IAPWS97(P = P*(10**(-6)), x = 1).mu
+        m = FAST_IAPWS.get_mug(P*(10**(-6)))
         return rho * abs(Ug) * self.D_h[i] / m
     
     #Get the liquid velocity in a given cell
@@ -689,11 +883,13 @@ class statesVariables():
         ## Modify for the Lockhart-Martinelli correlation present in DONJON5
         # LOCKHART-MARTINELLI CORRELATION
         xth = self.getQuality(i)
-        if xth == 0:
+        if xth < 1e-5:
             PHIL0 = 1.0
+        elif xth > 0.999:
+            PHIL0 = (rho_l / rho_g) if rho_g > 0 else 1.0
         else:
-            mu_g = IAPWS97(P = self.P[i]*(10**(-6)), x = 1).Vapor.mu
-            mu_l = IAPWS97(P = self.P[i]*(10**(-6)), x = 0).Liquid.mu
+            mu_g = FAST_IAPWS.get_mug(self.P[i]*(10**(-6)))
+            mu_l = FAST_IAPWS.get_mul(self.P[i]*(10**(-6)))
             XLM = ((1-xth)/xth)**0.9*(rho_g/rho_l)**0.5*(mu_g/mu_l)**0.1
             PHIL0 = 1.0 + 20/XLM + 1.0/XLM**2
         return PHIL0
@@ -727,9 +923,9 @@ class statesVariables():
             return 1.0
 
         # Propriétés thermodynamiques
-        mu_l = IAPWS97(P=P_MPa, x=0).Liquid.mu
-        mu_g = IAPWS97(P=P_MPa, x=1).Vapor.mu
-        sigma = IAPWS97(P=P_MPa, x=0).sigma
+        mu_l = FAST_IAPWS.get_mul(P_MPa)
+        mu_g = FAST_IAPWS.get_mug(P_MPa)
+        sigma = FAST_IAPWS.get_sigma(P_MPa)
 
         # Flux massique G (kg/m^2/s) et Diamètre hydraulique
         G = self.rhoTEMP[i] * abs(self.U[i])
@@ -765,3 +961,21 @@ class statesVariables():
             Ul.append(self.getUl(i))
             Ug.append(self.getUg(i))
         return Ul, Ug
+    
+    def getDTSUB(self, i):
+        """
+        From IGE409 equations 33.20 and 3.21. Calculates deltaTsub,D at the OFDB point with the Saha-Zuber correlation.
+        """
+        P = self.P[i] * 1e-6 
+        C_l = FAST_IAPWS.get_cpl(P) * 1000.0
+        k_l = FAST_IAPWS.get_kl(P)
+        Q = self.rhoTEMP[i] * abs(self.U[i])
+        D_h = self.D_h[i]
+        idx = min(i, len(self.q__) - 1)  # Ensure index is within bounds
+        phi = (self.q__[idx] * self.areaMatrix[idx])/self.phs[idx]
+        Pe =(Q*D_h*C_l)/k_l
+        if Pe> 70000:
+            DT_sub_D = phi/(0.0065*Q*C_l)
+        else:
+            DT_sub_D = (phi*D_h)/(455.0*k_l)
+        return DT_sub_D

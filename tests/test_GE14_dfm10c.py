@@ -107,7 +107,7 @@ def test_GE14_cases():
     # --- 2. Matrice de tests ---
     puissances_a_tester = [10.0]
     profils_a_tester = ['cosinus']
-    pdrop_options = [1]
+    pdrop_options = [0]
 
     print("--- Lancement des calculs pyTHM en mémoire ---")
     
@@ -151,7 +151,7 @@ def test_GE14_cases():
                     t_tot=0,
                     frfaccorel=frfaccorel_choice,
                     P2Pcorel='lockhartMartinelli', 
-                    voidFractionCorrel='Hibiki_Al-Saif', 
+                    voidFractionCorrel='EPRIvoidModel', 
                     numericalMethod="FVM",
                     porosities=porosities_profile,
                     acools=acool_profile,

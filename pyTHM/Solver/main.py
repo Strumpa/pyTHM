@@ -115,6 +115,8 @@ class pyTHM_solver:
             print(f"\n--- Sécante {secant_iter} : alpha = {alpha:.4f} (WR: {qFlow_wr:.2f} kg/s, Actif: {qFlow_actif:.2f} kg/s) ---")
 
             v_lat_prev = np.zeros(len(hole_z_indices))
+            v_lat_prev_prev = np.zeros(len(hole_z_indices))
+            omega_dyn = 0.9
             S_mass_a, S_mom_a, S_h_a = np.zeros(I_z+1), np.zeros(I_z+1), np.zeros(I_z+1)
             S_mass_w, S_mom_w, S_h_w = np.zeros(I_z+1), np.zeros(I_z+1), np.zeros(I_z+1)
 
@@ -153,26 +155,35 @@ class pyTHM_solver:
                 if error_v_lat < 1e-2:
                     print(f"    Ping-Pong convergé en {ping_pong + 1} itérations (Erreur max: {error_v_lat:.4f} m/s)")
                     break
-                print(f"    Ping-Pong iter {ping_pong+1}: error = {error_v_lat:.4f} m/s, v_lat_prev = {v_lat_prev} m/s, v_lat_new = {v_lat_new} m/s")
-                omega = 0.1
-                if ping_pong == 0:
-                    v_lat_prev = omega*v_lat_new
-                    S_mass_a = omega*S_mass_a_new
-                    S_mom_a = omega*S_mom_a_new
-                    S_h_a = omega*S_h_a_new
-                    S_mass_w = omega*S_mass_w_new
-                    S_mom_w = omega*S_mom_w_new
-                    S_h_w = omega*S_h_w_new
-                else:
-                    v_lat_prev = omega*v_lat_new + (1-omega)*v_lat_prev
-                    S_mass_a = omega*S_mass_a_new + (1-omega)*S_mass_a
-                    S_mom_a = omega*S_mom_a_new + (1-omega)*S_mom_a
-                    S_h_a = omega*S_h_a_new + (1-omega)*S_h_a
-                    S_mass_w = omega*S_mass_w_new + (1-omega)*S_mass_w
-                    S_mom_w = omega*S_mom_w_new + (1-omega)*S_mom_w
-                    S_h_w = omega*S_h_w_new + (1-omega)*S_h_w
                 
-            
+                print(f"    Ping-Pong iter {ping_pong+1}: error = {error_v_lat:.4f} m/s, omega_dyn = {omega_dyn:.3f}, v_lat_new = {v_lat_new}")
+
+                if ping_pong >= 2 and len(v_lat_new) > 0:
+                    delta_actuel = v_lat_new - v_lat_prev
+                    delta_ancien = v_lat_prev - v_lat_prev_prev
+                    dot_product = np.sum(delta_actuel * delta_ancien)
+                    if dot_product <0:
+                        omega_dyn = max(0.05, omega_dyn * 0.5)
+                    else:
+                        omega_dyn = min(1.0, omega_dyn * 1.1)
+                v_lat_prev_prev = v_lat_prev.copy()
+                if ping_pong == 0:
+                    v_lat_prev = omega_dyn*v_lat_new
+                    S_mass_a = omega_dyn*S_mass_a_new
+                    S_mom_a = omega_dyn*S_mom_a_new
+                    S_h_a = omega_dyn*S_h_a_new
+                    S_mass_w = omega_dyn*S_mass_w_new
+                    S_mom_w = omega_dyn*S_mom_w_new
+                    S_h_w = omega_dyn*S_h_w_new
+                else:
+                    v_lat_prev = omega_dyn*v_lat_new + (1-omega_dyn)*v_lat_prev
+                    S_mass_a = omega_dyn*S_mass_a_new + (1-omega_dyn)*S_mass_a
+                    S_mom_a = omega_dyn*S_mom_a_new + (1-omega_dyn)*S_mom_a
+                    S_h_a = omega_dyn*S_h_a_new + (1-omega_dyn)*S_h_a
+                    S_mass_w = omega_dyn*S_mass_w_new + (1-omega_dyn)*S_mass_w
+                    S_mom_w = omega_dyn*S_mom_w_new + (1-omega_dyn)*S_mom_w
+                    S_h_w = omega_dyn*S_h_w_new + (1-omega_dyn)*S_h_w
+
             K_local_orifice = 1.42
             rho_in_a = DFM_actif.rhoL[-1][0]
             U_in_a = DFM_actif.U[-1][0]
@@ -230,7 +241,8 @@ class pyTHM_solver:
             # extend to Twater : adding a mesh point corresponding to the middle of the canal in the plotting array, add rw to the bounds array and add Twater to the results array
             for index_z in range(len(self.convection_sol.z_mesh)):
                 self.T_distributions_axial[index_z].extend_to_canal_visu(rw = self.convection_sol.wall_dist, Tw = self.convection_sol.T_water[index_z])
-                
+
+            self.plot_actif_vs_wr()    
             if self.plot_results:
                 for z_val in self.plot_results:
                     self.plot_Temperature_at_z(z_val)
@@ -439,6 +451,114 @@ class pyTHM_solver:
 
         plt.show()
         return
+
+    def plot_actif_vs_wr(self):
+        """
+        Génère une figure complète comparant les paramètres thermohydrauliques
+        du canal actif et du water rod en fonction de la hauteur z.
+        """
+        import matplotlib.pyplot as plt
+
+        # Extraction des coordonnées axiales (z)
+        z = self.convection_sol.z_mesh
+        z_wr = self.convection_wr.z_mesh
+
+        # Création d'une figure avec 4 lignes et 2 colonnes
+        fig, axs = plt.subplots(4, 2, figsize=(16, 20))
+        fig.suptitle(f"Comparaison Thermohydraulique : Actif vs Water Rod\nCas : {self.name}", fontsize=16, fontweight='bold')
+
+        # --- 1. Pression ---
+        axs[0, 0].plot(z, self.convection_sol.P[-1], label="Actif", color="darkred", linewidth=2)
+        axs[0, 0].plot(z_wr, self.convection_wr.P[-1], label="Water Rod", color="salmon", linestyle="--", linewidth=2)
+        axs[0, 0].set_title("Pression", fontweight='bold')
+        axs[0, 0].set_ylabel("Pression [Pa]")
+        axs[0, 0].grid(True, linestyle=':', alpha=0.7)
+        axs[0, 0].legend()
+
+        # --- 2. Densités (Mélange et Liquide) ---
+        axs[0, 1].plot(z, self.convection_sol.rho[-1], label="Mélange (Actif)", color="indigo", linewidth=2)
+        axs[0, 1].plot(z_wr, self.convection_wr.rho[-1], label="Mélange (WR)", color="mediumpurple", linestyle="--", linewidth=2)
+        axs[0, 1].plot(z, self.convection_sol.rhoL[-1], label="Liquide (Actif)", color="blue", alpha=0.5)
+        axs[0, 1].plot(z_wr, self.convection_wr.rhoL[-1], label="Liquide (WR)", color="cyan", linestyle="--", alpha=0.5)
+        axs[0, 1].set_title("Densités", fontweight='bold')
+        axs[0, 1].set_ylabel("Densité [kg/m³]")
+        axs[0, 1].grid(True, linestyle=':', alpha=0.7)
+        axs[0, 1].legend()
+
+        # --- 3. Taux de vide ---
+        axs[1, 0].plot(z, self.convection_sol.voidFraction[-1], label="Actif", color="darkgreen", linewidth=2)
+        axs[1, 0].plot(z_wr, self.convection_wr.voidFraction[-1], label="Water Rod", color="lightgreen", linestyle="--", linewidth=2)
+        axs[1, 0].set_title("Taux de vide", fontweight='bold')
+        axs[1, 0].set_ylabel("Fraction [-]")
+        axs[1, 0].grid(True, linestyle=':', alpha=0.7)
+        axs[1, 0].legend()
+
+        # --- 4. Titre thermodynamique (Quality) ---
+        axs[1, 1].plot(z, self.convection_sol.xTh[-1], label="Actif", color="darkorange", linewidth=2)
+        axs[1, 1].plot(z_wr, self.convection_wr.xTh[-1], label="Water Rod", color="gold", linestyle="--", linewidth=2)
+        axs[1, 1].set_title("Titre thermodynamique", fontweight='bold')
+        axs[1, 1].set_ylabel("Titre [-]")
+        axs[1, 1].grid(True, linestyle=':', alpha=0.7)
+        axs[1, 1].legend()
+
+        # --- 5. Température du fluide ---
+        axs[2, 0].plot(z, self.convection_sol.T_water, label="Actif", color="red", linewidth=2)
+        axs[2, 0].plot(z_wr, self.convection_wr.T_water, label="Water Rod", color="pink", linestyle="--", linewidth=2)
+        axs[2, 0].set_title("Température du fluide", fontweight='bold')
+        axs[2, 0].set_ylabel("Température [K]")
+        axs[2, 0].grid(True, linestyle=':', alpha=0.7)
+        axs[2, 0].legend()
+
+        # --- 6. Vitesses (Mélange, Vapeur, Liquide) ---
+        axs[2, 1].plot(z, self.convection_sol.U[-1], label="Mélange (Actif)", color="black", linewidth=2)
+        axs[2, 1].plot(z, self.convection_sol.Ug, label="Vapeur (Actif)", color="red", linewidth=1.5)
+        axs[2, 1].plot(z, self.convection_sol.Ul, label="Liquide (Actif)", color="blue", linewidth=1.5)
+        axs[2, 1].plot(z_wr, self.convection_wr.U[-1], label="Mélange (WR)", color="gray", linestyle="--", linewidth=2)
+        axs[2, 1].plot(z_wr, self.convection_wr.Ug, label="Vapeur (WR)", color="salmon", linestyle="--", linewidth=1.5)
+        axs[2, 1].plot(z_wr, self.convection_wr.Ul, label="Liquide (WR)", color="cyan", linestyle="--", linewidth=1.5)
+        axs[2, 1].set_title("Vitesses des phases", fontweight='bold')
+        axs[2, 1].set_ylabel("Vitesse [m/s]")
+        axs[2, 1].grid(True, linestyle=':', alpha=0.7)
+        axs[2, 1].legend()
+
+        # --- 7. Profil de puissance ---
+        axs[3, 0].plot(z, self.convection_sol.q__, label="Actif", color="darkmagenta", linewidth=2)
+        axs[3, 0].plot(z_wr, self.convection_wr.q__, label="Water Rod", color="violet", linestyle="--", linewidth=2)
+        axs[3, 0].set_title("Profil de puissance (Densité volumique)", fontweight='bold')
+        axs[3, 0].set_ylabel("Puissance [W/m³]")
+        axs[3, 0].grid(True, linestyle=':', alpha=0.7)
+        axs[3, 0].legend()
+        
+        # --- 8. Case vide (Pour garder la symétrie) ---
+        axs[3, 1].axis('off')
+
+        # Ajout des labels X pour chaque graphique
+        # Ajout des labels X pour chaque graphique
+        for ax in axs.flat:
+            if ax.has_data():
+                ax.set_xlabel("Position axiale z [m]")
+
+        # Ajustement des espaces entre les graphiques
+        plt.tight_layout(rect=[0, 0.03, 1, 0.96])
+        
+        # --- NOUVELLE LOGIQUE DE SAUVEGARDE ---
+        import os
+        
+        # Définition du chemin du dossier cible
+        results_dir = "results"
+        
+        # Création du dossier s'il n'existe pas déjà (équivalent de mkdir -p)
+        os.makedirs(results_dir, exist_ok=True)
+        
+        # Construction du chemin complet du fichier
+        filepath = os.path.join(results_dir, f"{self.name}_actif_vs_wr.png")
+        
+        # Sauvegarde en haute résolution (300 dpi)
+        plt.savefig(filepath, dpi=300)
+        print(f">>> Graphique comparatif sauvegardé avec succès sous : {filepath}")
+        
+        # On ferme la figure pour libérer la mémoire (très important si vous lancez des boucles de tests !)
+        plt.close(fig)
     
 
 class plotting:

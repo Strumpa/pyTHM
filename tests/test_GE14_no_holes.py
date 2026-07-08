@@ -19,7 +19,7 @@ def generer_nom_cas(pdrop, power_kw, type_profil):
     if type_profil.lower() in ['cosinus', 'cos', 'c']: nom += "c"
     elif type_profil.lower() in ['sinus', 'sin', 's']: nom += "s"
     else: nom += "u"
-    nom += "_v"
+    nom += "_no_holes_v"
     return nom
 
 def generer_profil_puissance(type_profil, nz):
@@ -75,7 +75,7 @@ def test_GE14_cases():
         dz, dz, z_min, maxh
     )
 
-    acools_wr = [a/10000.0 for a in geom_profiles_wr[2]] # Conversion cm² -> m²
+    acools_wr = [a / 10000.0 for a in geom_profiles_wr[2]] # Conversion cm² -> m²
     porosities_wr = geom_profiles_wr[1]
     dhs_wr = [dh * 1e-2 for dh in geom_profiles_wr[3]]    # Conversion cm -> m
     kexp_wr = geom_profiles_wr[5]
@@ -105,9 +105,9 @@ def test_GE14_cases():
     mass_flow = 8.407E-02 * (ref_acool / 8.470E-05)
 
     # --- 2. Matrice de tests ---
-    puissances_a_tester = [10.0]
-    profils_a_tester = ['cosinus']
-    pdrop_options = [1]
+    puissances_a_tester = [10.0, 20.0, 40.0]
+    profils_a_tester = ['cosinus', 'sinus']
+    pdrop_options = [0, 1]
 
     print("--- Lancement des calculs pyTHM en mémoire ---")
     
@@ -151,7 +151,7 @@ def test_GE14_cases():
                     t_tot=0,
                     frfaccorel=frfaccorel_choice,
                     P2Pcorel='lockhartMartinelli', 
-                    voidFractionCorrel='Hibiki_Al-Saif', 
+                    voidFractionCorrel='EPRIvoidModel', 
                     numericalMethod="FVM",
                     porosities=porosities_profile,
                     acools=acool_profile,
@@ -166,8 +166,8 @@ def test_GE14_cases():
                     kexp_wr=kexp_wr,
                     p_wr=p_wr,
                     rwall_wr=rwall_wr,
-                    hole_z=hole_z,
-                    hole_A=hole_A,
+                    hole_z=[],
+                    hole_A=[],
                     Idelchik_enter=Idelchik_enter,
                     Idelchik_exit=Idelchik_exit
                 )

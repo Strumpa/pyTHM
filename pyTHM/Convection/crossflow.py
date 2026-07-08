@@ -1,4 +1,5 @@
 import numpy as np
+from pyTHM.Lissage.smooth import if_lisse, max_lisse, min_lisse
 
 def compute_crossflow(DFM_actif, DFM_wr, hole_z_indices, hole_A, Idelchik_enter, Idelchik_exit, rwall_wr, v_lat_prev):
     """
@@ -101,7 +102,8 @@ def compute_crossflow(DFM_actif, DFM_wr, hole_z_indices, hole_A, Idelchik_enter,
             phi_lo2 = 1.0 
             
             # Calcul du débit massique (sécurité max(0, delta_P) pour éviter sqrt d'un négatif)
-            m_dot = A_trou * np.sqrt( 2 * max(0, delta_P) * rho_l_amont / (phi_lo2 * K_sing) )
+            delta_P_lisse = max_lisse(1e-4, delta_P, 10.0)
+            m_dot = A_trou * np.sqrt( 2 * max(0, delta_P_lisse) * rho_l_amont / (phi_lo2 * K_sing) )
             
             # Mise à jour v_lat
             v_lat = m_dot / (rho_l_amont * A_trou)

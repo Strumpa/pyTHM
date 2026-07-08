@@ -19,6 +19,8 @@ from iapws import IAPWS97
 import matplotlib.pyplot as plt
 from pyTHM.Solver.linalg import FVM, numericalResolution
 from pyTHM.WaterProperties.waterProperties import statesVariables
+from pyTHM.Lissage.smooth import if_lisse, max_lisse, min_lisse
+from pyTHM.WaterProperties.waterProperties import FAST_IAPWS
 import cProfile
 
 class DFMclass():
@@ -146,7 +148,7 @@ class DFMclass():
             self.sousRelaxFactor = 0.8
         else:
             self.sousRelaxFactor = 1
-        self.epsOuterIteration = 5e-4
+        self.epsOuterIteration = 1e-4
         self.maxOuterIteration = 1000
 
         #Universal constant
@@ -228,7 +230,7 @@ class DFMclass():
             self.H = [np.ones(self.nFaces)*self.hInlet] #
             self.voidFraction = [np.array([i*self.epsilonTarget/self.nFaces for i in range(self.nFaces)])]
 
-            updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.qFlow, self.fuelRadius,  self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
+            updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius,  self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
             updateVariables.createFields()
                 
             self.xTh = [np.ones(self.nFaces)]
@@ -252,7 +254,7 @@ class DFMclass():
                 self.H = [self.enthalpyList[self.timeCount]]
                 self.voidFraction = [self.voidFractionList[self.timeCount]]
 
-                updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
+                updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
                 updateVariables.createFields()
 
                 self.xTh = [np.ones(self.nFaces)]
@@ -624,7 +626,7 @@ class DFMclass():
                 Htemp = resolveSystem.x
 
                 self.H.append(Htemp)
-                updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
+                updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
                 updateVariables.updateFields()
 
                 self.xTh.append(updateVariables.xThTEMP)
@@ -694,7 +696,7 @@ class DFMclass():
                     Htemp = resolveSystem.x
 
                     self.H.append(Htemp)
-                    updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
+                    updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
                     updateVariables.updateFields()
 
                     self.xTh.append(updateVariables.xThTEMP)
@@ -765,7 +767,7 @@ class DFMclass():
         
         self.T_water = np.zeros(self.nFaces)
         for i in range(self.nFaces):
-            self.T_water[i] = IAPWS97(P=self.P[-1][i]*10**-6, h=self.H[-1][i]*10**-3).T
+            self.T_water[i] = FAST_IAPWS.get_sub_T(self.P[-1][i]*10**-6, self.H[-1][i]*10**-3)
 
         self.interpolate()
 
@@ -807,15 +809,80 @@ class DFMclass():
         self.h_z = self.H[-1]
         self.T_surf = np.zeros(self.nCells)
         self.Hc = np.zeros(self.nCells)
+        updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
+        updateVariables.createFields()
         for i in range(self.nCells):
-            Pr_number = IAPWS97(P=self.Pfin[i]*10**-6, h=self.h_z[i]*10**-3).Liquid.Prandt
-            Re_number = self.getReynoldsNumber(i)
-            k_fluid = IAPWS97(P=self.Pfin[i]*10**-6, h=self.h_z[i]*10**-3).Liquid.k
-            self.Hc[i] = (0.023)*(Pr_number)**0.4*(Re_number)**0.8*k_fluid/self.D_h[i]
-            self.T_surf[i] = ((self.q__[i]*self.areaMatrix[i])/(2*np.pi*self.cladRadius)/self.Hc[i]+self.T_water[i])
-    
+            hl, hg = updateVariables.getPhasesEnthalpy(i)
+            P_MPa = self.Pfin[i]*10**-6
+            Tsat = FAST_IAPWS.get_Tsat(P_MPa)
+            DTSUB = updateVariables.getDTSUB(i)
+            H_kJ = self.h_z[i]*10**-3
+            phi = (self.q__[i] * self.areaMatrix[i])/(2 * np.pi * self.cladRadius)
+            rho_l = FAST_IAPWS.get_rhol(P_MPa)
+            rho_g = FAST_IAPWS.get_rhog(P_MPa)
+            mu_l = FAST_IAPWS.get_mul(P_MPa)
+            mu_g = FAST_IAPWS.get_mug(P_MPa)
+            k_l = FAST_IAPWS.get_kl(P_MPa)
+            k_g = FAST_IAPWS.get_kg(P_MPa)
+            C_l = FAST_IAPWS.get_cpl(P_MPa) * 1000.0
+            C_g = FAST_IAPWS.get_cpg(P_MPa) * 1000.0
+            sigma = FAST_IAPWS.get_sigma(P_MPa)
+            h_fg = (hg - hl) * 1000.0
+            # Régime liquide: Dittus-Boelter
+            Pr_l = (C_l * mu_l) / k_l
+            Pr_g = (C_g * mu_g) / k_g
+            Re_l_db = max(1e-4, updateVariables.getReynoldsNumberLiquid(i))
+            Hc_liq = 0.023 * (Pr_l**0.4) * (Re_l_db**0.8) * k_l / self.D_h[i]
+            T_surf_liq = (phi / Hc_liq) + self.T_water[i]
+            # Régime ébullition : Chen
+            G = self.rho[-1][i] * abs(self.U[-1][i])
+            x_flow = updateVariables.getQuality(i)
+            x_borne_sup = min_lisse(0.999, x_flow, 1e-4)
+            x = max_lisse(1e-5, x_borne_sup, 1e-5)
+            X_tt_inv = ((x/(1.0-x))**0.9) * ((rho_l/rho_g)**0.5) * ((mu_g/mu_l)**0.1)
+            F_calcul = 2.35 *(0.213 + X_tt_inv)**0.736 
+            F = if_lisse(X_tt_inv, 0.100207, 0.01, F_calcul, 1.0)
+            Re_l_chen = max(1e-4, G *(1.0-x)*self.D_h[i]/mu_l)
+            H_sp = 0.023 * (Pr_l**0.4)*(Re_l_chen**0.8)*k_l/self.D_h[i]
+            H_c_chen = F * H_sp
+            S_fz = 1.0/(1.0 + 2.53e-6*(Re_l_chen*F**(1.25))**1.17)
+            C_fz = 0.00122 * (k_l**(0.79) * C_l**(0.45) * rho_l**(0.49))/(mu_l**(0.29) * sigma**(0.5) * h_fg**(0.24) * rho_g**0.24)
+            T_surf_guess = self.T_water[i] + phi/H_c_chen
+            #Boucle Newton pour ébullition nuclée
+            for j in range(20):
+                delta_T_sat = max_lisse(0.01, T_surf_guess - Tsat, 0.1)
+                T_eval = min_lisse(T_surf_guess, 647.0, 0.5)
+                
+                try:
+                    P_sat_wall = np.interp(T_eval, FAST_IAPWS.Tsat, FAST_IAPWS.P_arr) * 1e6
+                except (NotImplementedError, ValueError):
+                    P_sat_wall = P_MPa * 1e6
+                    
+                delta_P_sat = max_lisse(1.0, P_sat_wall - (P_MPa * 1e6), 10.0)
+                
+                H_fz = C_fz * (delta_T_sat**0.24) * (delta_P_sat**0.75)
+                H_nb = S_fz * H_fz
+                T_surf_new = (phi + H_nb * Tsat + H_c_chen * self.T_water[i]) / (H_nb + H_c_chen)
+                
+                if abs(T_surf_new - T_surf_guess) < 0.05:
+                    T_surf_guess = T_surf_new
+                    break
+                T_surf_guess = 0.5 * T_surf_new + 0.5 * T_surf_guess
+            T_surf_boil = T_surf_guess
+            Hc_boil = H_nb + H_c_chen
+            # Régime vapeur: Dittus-Boelter
+            Re_g_db = max(1e-4, updateVariables.getReynoldsNumberVapor(i))
+            Hc_vap = 0.023 * (Pr_g**0.4) * (Re_g_db**0.8) * k_g / self.D_h[i]
+            T_surf_vap = (phi / Hc_vap) + self.T_water
+            #Assemblage global
+            T_onset = Tsat-DTSUB
+            T_surf_trans1 = if_lisse(self.T_water[i], T_onset,0.5,T_surf_boil, T_surf_liq)
+            Hc_trans1 = if_lisse(self.T_water[i], T_onset,0.5,Hc_boil, Hc_liq)
+            val_T = if_lisse(H_kJ, hg, 10.0, T_surf_vap, T_surf_trans1)
+            val_Hc = if_lisse(H_kJ, hg, 10.0, Hc_vap, Hc_trans1)
+            self.T_surf[i] = np.ravel(val_T)[0]
+            self.Hc[i] = np.ravel(val_Hc)[0]
         return self.T_surf
-
     #Function to use the sous relaxation
     def sousRelaxation(self):
 
@@ -842,7 +909,7 @@ class DFMclass():
     
     #Function to get the phases velocity
     def getPhasesVelocity(self):
-        water = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
+        water = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
         Ul = [water.getUl(i) for i in range(self.nCells)]
         Ug = [water.getUg(i) for i in range(self.nCells)]
         return Ul, Ug
@@ -855,5 +922,6 @@ class DFMclass():
  
     #get the Reynolds number
     def getReynoldsNumber(self, i):
-        return (self.U[-1][i] * self.D_h[i] * self.rho[-1][i]) / IAPWS97(P=self.P[-1][i]*10**-6, x=0).Liquid.mu
+        mul = FAST_IAPWS.get_mul(self.P[-1][i]*10**-6)
+        return (self.U[-1][i] * self.D_h[i] * self.rho[-1][i]) / mul
      
