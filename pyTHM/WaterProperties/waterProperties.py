@@ -787,10 +787,10 @@ class statesVariables():
             loss_fric_pos = (self.getPhi2Phi(i-1)/4) * (self.fTEMP[i-1] / self.D_h[i-1]) * self.DV[i-1]
             
             # Application de la formule : loss = 0.5 * phi2 * K * (rho_m / rho_l) * Area
-            loss_exp_pos = 0.5 * self.getPhi2Expansion(i-1) * self.kexp[i-1] * (rho_m_pos / rho_l_pos) * A_pos
-            loss_con_pos = 0.5 * self.getPhi2Contraction(i-1) * self.kcon[i-1] * (rho_m_pos / rho_l_pos) * A_pos
+            #loss_exp_pos = 0.5 * self.getPhi2Expansion(i-1) * self.kexp[i-1] * (rho_m_pos / rho_l_pos) * A_pos
+            #loss_con_pos = 0.5 * self.getPhi2Contraction(i-1) * self.kcon[i-1] * (rho_m_pos / rho_l_pos) * A_pos
             
-            A_chap_pos = A_pos + loss_fric_pos + loss_exp_pos + loss_con_pos
+            A_chap_pos = A_pos + loss_fric_pos #+ loss_exp_pos + loss_con_pos
 
             # --- FACE NÉGATIVE (i) ---
             rho_m_neg = self.rhoTEMP[i]
@@ -801,10 +801,10 @@ class statesVariables():
             loss_fric_neg = (self.getPhi2Phi(i)/4) * (self.fTEMP[i] / self.D_h[i]) * self.DV[i]
             
             # Application de la formule
-            loss_exp_neg = 0.5 * self.getPhi2Expansion(i) * self.kexp[i] * (rho_m_neg / rho_l_neg) * A_neg
-            loss_con_neg = 0.5 * self.getPhi2Contraction(i) * self.kcon[i] * (rho_m_neg / rho_l_neg) * A_neg
+            #loss_exp_neg = 0.5 * self.getPhi2Expansion(i) * self.kexp[i] * (rho_m_neg / rho_l_neg) * A_neg
+            #loss_con_neg = 0.5 * self.getPhi2Contraction(i) * self.kcon[i] * (rho_m_neg / rho_l_neg) * A_neg
             
-            A_chap_neg = A_neg - loss_fric_neg - loss_exp_neg - loss_con_neg
+            A_chap_neg = A_neg - loss_fric_neg # - loss_exp_neg - loss_con_neg
             
         return A_chap_pos, A_chap_neg
 

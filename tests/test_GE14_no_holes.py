@@ -12,6 +12,9 @@ if root_dir not in sys.path:
 from starterDD.GeometryAnalysis.cartesian_geometry_analysis import CartesianGeometricAnalyser
 from pyTHM.Solver.main import pyTHM_solver 
 
+# NOUVEL IMPORT : On importe le CoreModel
+from starterDD.DDModel.DonjonModel import CoreModel
+
 def generer_nom_cas(pdrop, power_kw, type_profil):
     nom = "dfm"
     if pdrop == 1: nom += "p"
@@ -19,7 +22,7 @@ def generer_nom_cas(pdrop, power_kw, type_profil):
     if type_profil.lower() in ['cosinus', 'cos', 'c']: nom += "c"
     elif type_profil.lower() in ['sinus', 'sin', 's']: nom += "s"
     else: nom += "u"
-    nom += "_no_holes_v"
+    nom += "_v"
     return nom
 
 def generer_profil_puissance(type_profil, nz):
@@ -45,8 +48,26 @@ def test_GE14_cases():
         print(f"Erreur : Fichier {yaml_path} introuvable.")
         return
 
-    print("--- Initialisation de l'analyseur géométrique ---")
-    analyser = CartesianGeometricAnalyser(core_yaml_path=yaml_path, core_i=1, core_j=1)
+    print("--- Initialisation du modèle et de l'analyseur géométrique ---")
+    
+    # --- MODIFICATIONS ICI ---
+    # 1. Séparer le dossier et le nom du fichier
+    path_to_configs = os.path.dirname(yaml_path)
+    core_desc_file = os.path.basename(yaml_path)
+    
+    # 2. Instancier le modèle du cœur
+    core_model = CoreModel(
+        name="GE14_mini_core", 
+        path_to_yaml_configs=path_to_configs, 
+        core_description_yaml=core_desc_file
+    )
+    
+    # 3. Créer les modèles d'assemblage en mémoire
+    core_model.createAssemblyModels()
+    
+    # 4. On passe l'objet `core_model` à l'analyseur
+    analyser = CartesianGeometricAnalyser(core_model=core_model, core_i=1, core_j=1)
+    # -------------------------
 
     nz = 40
     
@@ -70,6 +91,18 @@ def test_GE14_cases():
     kcon_profile = geom_profiles[6]
     rsin_profile = geom_profiles[7]
 
+    # Vérification des données entrantes
+    print(f"Min/Max acools: {np.min(acool_profile)}, {np.max(acool_profile)}")
+    print(f"NaN dans acools: {np.isnan(acool_profile).any()}")
+    print(f"Zéro dans acools: {np.any(acool_profile == 0)}")
+    print(f"Taille de acools: {len(acool_profile)}")
+
+    # Plot rapide pour vérifier la continuité
+    import matplotlib.pyplot as plt
+    plt.plot(acool_profile)
+    plt.title("Profil axial de section (acools)")
+    plt.show()
+
     geom_profiles_wr = analyser.execute_profile_z(
         ('wr_tube',),
         dz, dz, z_min, maxh
@@ -92,13 +125,15 @@ def test_GE14_cases():
     hole_z = [h['z'] * 1e-2 for h in wr_holes]
     hole_A = [math.pi * (h['D_hole'] * 0.5e-2) ** 2 for h in wr_holes]
     
-    # Paramètres géométriques de base extraits du YAML
-    pin_geom = analyser.data_ref['PIN_GEOMETRY']
+    # --- MODIFICATION ICI : Récupération depuis l'objet ---
+    # Paramètres géométriques de base extraits de l'objet DRAGON
+    pin_geom = analyser.slices_data[0]['dragon_assembly_model'].pin_geometry_dict
     fuel_radius = pin_geom['fuel_radius'] * 1E-2
     gap_radius = pin_geom['gap_radius'] * 1E-2
     clad_radius = pin_geom['clad_radius'] * 1E-2
     pitch_m = pitch_cm * 1E-2
     fuel_rod_length = (maxh - z_min) * 1E-2
+    # ------------------------------------------------------
 
     # Logique de débit massique conservée depuis l'ancien script
     ref_acool = min(acool_profile)
@@ -150,7 +185,7 @@ def test_GE14_cases():
                     dt=0,
                     t_tot=0,
                     frfaccorel=frfaccorel_choice,
-                    P2Pcorel='lockhartMartinelli', 
+                    P2Pcorel='friedel', 
                     voidFractionCorrel='EPRIvoidModel', 
                     numericalMethod="FVM",
                     porosities=porosities_profile,
@@ -160,6 +195,7 @@ def test_GE14_cases():
                     kexp_profile=kexp_profile,
                     kcon_profile=kcon_profile,
                     rsin_profile=rsin_profile,
+                    water_rod=True,
                     acools_wr=acools_wr,
                     porosities_wr=porosities_wr,
                     dhs_wr=dhs_wr,

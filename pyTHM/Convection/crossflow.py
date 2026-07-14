@@ -1,5 +1,6 @@
 import numpy as np
 from pyTHM.Lissage.smooth import if_lisse, max_lisse, min_lisse
+from pyTHM.WaterProperties.waterProperties import FAST_IAPWS
 
 def compute_crossflow(DFM_actif, DFM_wr, hole_z_indices, hole_A, Idelchik_enter, Idelchik_exit, rwall_wr, v_lat_prev):
     """
@@ -25,14 +26,48 @@ def compute_crossflow(DFM_actif, DFM_wr, hole_z_indices, hole_A, Idelchik_enter,
     # La boucle se fait sur les volumes (cellules)
     for c in range(nCells):
         if rwall_wr[c] > 0:
-            # Différence de température (T_wr - T_actif)
+            P_a_MPa = DFM_actif.P[-1][c] * 1e-6
+            P_w_MPa = DFM_wr.P[-1][c] * 1e-6
+            
+            # --- 1. Coefficient convectif du canal Actif (Dittus-Boelter) ---
+            mu_a = FAST_IAPWS.get_mul(P_a_MPa)
+            cp_a = FAST_IAPWS.get_cpl(P_a_MPa) * 1000.0
+            k_a = FAST_IAPWS.get_kl(P_a_MPa)
+            
+            G_a = DFM_actif.rho[-1][c] * abs(DFM_actif.U[-1][c])
+            Re_a = max(1e-4, G_a * DFM_actif.D_h[c] / mu_a)
+            Pr_a = (cp_a * mu_a) / k_a
+            
+            h_a = (0.023 * (Re_a**0.8) * (Pr_a**0.4) * k_a) / DFM_actif.D_h[c]
+            
+            # --- 2. Coefficient convectif du Water Rod (Dittus-Boelter) ---
+            mu_w = FAST_IAPWS.get_mul(P_w_MPa)
+            cp_w = FAST_IAPWS.get_cpl(P_w_MPa) * 1000.0
+            k_w = FAST_IAPWS.get_kl(P_w_MPa)
+            
+            G_w = DFM_wr.rho[-1][c] * abs(DFM_wr.U[-1][c])
+            Re_w = max(1e-4, G_w * DFM_wr.D_h[c] / mu_w)
+            Pr_w = (cp_w * mu_w) / k_w
+            
+            h_w = (0.023 * (Re_w**0.8) * (Pr_w**0.4) * k_w) / DFM_wr.D_h[c]
+            
+            # --- 3. Bilan des Résistances Thermiques ---
+            # On utilise le diamètre hydraulique du WR pour le périmètre du tube (pi * D)
+            perim_wr = np.pi * DFM_wr.D_h[c]
+            
+            # Résistances linéaires en K.m / W
+            R_conv_a = 1.0 / (h_a * perim_wr)
+            R_conv_w = 1.0 / (h_w * perim_wr)
+            R_paroi = rwall_wr[c]
+            
+            # Somme des résistances en série
+            R_tot = R_paroi + R_conv_a + R_conv_w
+            
+            # --- 4. Calcul du Flux ---
             delta_T = DFM_wr.T_water[c] - DFM_actif.T_water[c]
+            Q_cond = (delta_T / R_tot) * DFM_actif.Dz
             
-            # Q_cond = (Delta T / R_wall) * Dz [W]
-            # Positif si la chaleur va du Water Rod vers l'Actif
-            Q_cond = (delta_T / rwall_wr[c]) * DFM_actif.Dz
-            
-            # L'échange thermique calculé sur la cellule est affecté à la face sortante
+            # Affectation à la face sortante
             face_idx = c + 1
             S_h_a[face_idx] += Q_cond
             S_h_w[face_idx] -= Q_cond

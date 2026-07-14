@@ -18,7 +18,7 @@ class pyTHM_solver:
                  canal_radius, fuel_radius, gap_radius, clad_radius, fuel_rod_length, tInlet, pOutlet, qFlow, Powtot, axial_p_form, fraction_pow_fuel,
                  k_fuel, H_gap, k_clad, I_z, I_f, I_c, plot_at_z, solveConduction,
                  dt, t_tot, frfaccorel = 'base', P2Pcorel = 'base', voidFractionCorrel = 'GEramp', numericalMethod= 'FVM', 
-                 porosities=None, acools=None, dhs=None, phs=None, kexp_profile=None, kcon_profile=None, rsin_profile=None,
+                 porosities=None, acools=None, dhs=None, phs=None, kexp_profile=None, kcon_profile=None, rsin_profile=None, water_rod=True,
                  acools_wr=None, porosities_wr=None, dhs_wr=None, kexp_wr=None, p_wr=None, rwall_wr=None,
                  hole_z=None, hole_A=None, Idelchik_enter=None, Idelchik_exit=None):
         """
@@ -30,6 +30,9 @@ class pyTHM_solver:
         Options to plot results can be activated giving an array of z values at which the results should be plotted.
         """
         self.name = case_name
+        self.water_rod = water_rod
+        if acools_wr is None:
+            self.water_rod = False
         # time atributes to prepare for transient simulations
         self.t0 = 0
         self.dt = dt
@@ -96,138 +99,160 @@ class pyTHM_solver:
         
         Dz_local = fuel_rod_length / I_z
         z_cells = np.linspace(Dz_local/2, fuel_rod_length - Dz_local/2, I_z)
-        hole_z_indices = []
-        if hole_z is not None:
-            for z in hole_z:
-                idx = (np.abs(z_cells - z)).argmin()
-                hole_z_indices.append(idx)
-        else:
-            hole_A = []
-
-        alpha = 0.05 # Initial guess : 5% of global mass flow rate
-        alpha_prev = 0.04 
-        delta_P_prev = None
-
-        for secant_iter in range(15): # Max 15 essais pour équilibrer les pressions d'entrée
-            qFlow_wr = alpha * qFlow
-            qFlow_actif = (1 - alpha) * qFlow
-            
-            print(f"\n--- Sécante {secant_iter} : alpha = {alpha:.4f} (WR: {qFlow_wr:.2f} kg/s, Actif: {qFlow_actif:.2f} kg/s) ---")
-
-            v_lat_prev = np.zeros(len(hole_z_indices))
-            v_lat_prev_prev = np.zeros(len(hole_z_indices))
-            omega_dyn = 0.9
-            S_mass_a, S_mom_a, S_h_a = np.zeros(I_z+1), np.zeros(I_z+1), np.zeros(I_z+1)
-            S_mass_w, S_mom_w, S_h_w = np.zeros(I_z+1), np.zeros(I_z+1), np.zeros(I_z+1)
-
-            for ping_pong in range(40): 
-                
-                DFM_actif = DFMclass(canal_type, I_z, tInlet, qFlow_actif, pOutlet, fuel_rod_length, 
-                                     fuel_radius, clad_radius, canal_radius * 2.0, numericalMethod, 
-                                     frfaccorel, P2Pcorel, voidFractionCorrel,
-                                     dt=dt, t_tot=t_tot, porosities=porosities, acools=acools, 
-                                     dhs=dhs, phs=phs, kexp=kexp_profile, kcon=kcon_profile, rsin=rsin_profile)
-                DFM_actif.set_Fission_Power(Powtot, axial_p_form, fraction_pow_fuel)
-                DFM_actif.update_sources(S_mass_a, S_mom_a, S_h_a)
-                DFM_actif.resolveDFM()
-
-                kcon_wr_safe = np.zeros(I_z+1) if kexp_wr is None else np.zeros_like(kexp_wr)
-                rsin_wr_safe = np.ones(I_z+1) if kexp_wr is None else np.ones_like(kexp_wr)
-                
-                DFM_wr = DFMclass(canal_type, I_z, tInlet, qFlow_wr, pOutlet, fuel_rod_length, 
-                                  1e-5, 1e-5, canal_radius * 2.0, numericalMethod, 
-                                  frfaccorel, P2Pcorel, voidFractionCorrel,
-                                  dt=dt, t_tot=t_tot, porosities=porosities_wr, acools=acools_wr, 
-                                  dhs=dhs_wr, phs=p_wr, kexp=kexp_wr, kcon=kcon_wr_safe, rsin=rsin_wr_safe)
-                DFM_wr.set_Fission_Power(0.0, axial_p_form, fraction_pow_fuel)
-                DFM_wr.update_sources(S_mass_w, S_mom_w, S_h_w)
-                DFM_wr.resolveDFM()
-                
-                S_mass_a_new, S_mom_a_new, S_h_a_new, S_mass_w_new, S_mom_w_new, S_h_w_new, v_lat_new = compute_crossflow(
-                    DFM_actif, DFM_wr, hole_z_indices, hole_A, Idelchik_enter, Idelchik_exit, rwall_wr, v_lat_prev
-                )
-                v_lat_new = np.clip(v_lat_new, -80.0, 80.0) 
-                if len(v_lat_new) > 0:
-                    error_v_lat = np.max(np.abs(v_lat_new - v_lat_prev))
-                else:
-                    error_v_lat = 0.0
-
-                if error_v_lat < 1e-2:
-                    print(f"    Ping-Pong convergé en {ping_pong + 1} itérations (Erreur max: {error_v_lat:.4f} m/s)")
-                    break
-                
-                print(f"    Ping-Pong iter {ping_pong+1}: error = {error_v_lat:.4f} m/s, omega_dyn = {omega_dyn:.3f}, v_lat_new = {v_lat_new}")
-
-                if ping_pong >= 2 and len(v_lat_new) > 0:
-                    delta_actuel = v_lat_new - v_lat_prev
-                    delta_ancien = v_lat_prev - v_lat_prev_prev
-                    dot_product = np.sum(delta_actuel * delta_ancien)
-                    if dot_product <0:
-                        omega_dyn = max(0.05, omega_dyn * 0.5)
-                    else:
-                        omega_dyn = min(1.0, omega_dyn * 1.1)
-                v_lat_prev_prev = v_lat_prev.copy()
-                if ping_pong == 0:
-                    v_lat_prev = omega_dyn*v_lat_new
-                    S_mass_a = omega_dyn*S_mass_a_new
-                    S_mom_a = omega_dyn*S_mom_a_new
-                    S_h_a = omega_dyn*S_h_a_new
-                    S_mass_w = omega_dyn*S_mass_w_new
-                    S_mom_w = omega_dyn*S_mom_w_new
-                    S_h_w = omega_dyn*S_h_w_new
-                else:
-                    v_lat_prev = omega_dyn*v_lat_new + (1-omega_dyn)*v_lat_prev
-                    S_mass_a = omega_dyn*S_mass_a_new + (1-omega_dyn)*S_mass_a
-                    S_mom_a = omega_dyn*S_mom_a_new + (1-omega_dyn)*S_mom_a
-                    S_h_a = omega_dyn*S_h_a_new + (1-omega_dyn)*S_h_a
-                    S_mass_w = omega_dyn*S_mass_w_new + (1-omega_dyn)*S_mass_w
-                    S_mom_w = omega_dyn*S_mom_w_new + (1-omega_dyn)*S_mom_w
-                    S_h_w = omega_dyn*S_h_w_new + (1-omega_dyn)*S_h_w
-
-            K_local_orifice = 1.42
-            rho_in_a = DFM_actif.rhoL[-1][0]
-            U_in_a = DFM_actif.U[-1][0]
-            P_in_actif = DFM_actif.P[-1][0] 
-            r_seo = 0.026 # Side entry orifice radius
-            A_seo = np.pi * r_seo**2
-            K_orifice_actif = K_local_orifice * (DFM_actif.areaMatrix[0] / A_seo)**2
-            DeltaP_orifice_actif = 0.5 * rho_in_a * U_in_a**2 * K_orifice_actif
-            P_plenum_actif = P_in_actif + DeltaP_orifice_actif
-
-            rho_in_w = DFM_wr.rhoL[-1][0]
-            U_in_w = DFM_wr.U[-1][0]
-            P_in_wr = DFM_wr.P[-1][0] 
-            r_gicleur_wr = 0.0030
-            A_gicleur = np.pi * r_gicleur_wr**2
-            K_orifice_wr = K_local_orifice * (DFM_wr.areaMatrix[0] / (2*A_gicleur))**2
-            DeltaP_orifice_wr = 0.5 * rho_in_w * U_in_w**2 * K_orifice_wr
-            P_plenum_wr = P_in_wr + DeltaP_orifice_wr
-            
-            delta_P = P_plenum_actif - P_plenum_wr
-            
-            print(f"P_plenum Actif: {P_plenum_actif:.0f} Pa | P_plenum WR: {P_plenum_wr:.0f} Pa | Différence: {delta_P:.1f} Pa")           
-
-            if abs(delta_P) < 500.0:
-                print(">>> Convergence du débit d'entrée (alpha) atteinte !")
-                break
-
-            if delta_P_prev is not None:
-                if delta_P != delta_P_prev: # Sécurité mathématique
-                    derivative = (delta_P - delta_P_prev) / (alpha - alpha_prev)
-                    alpha_next = alpha - delta_P / derivative
-                    alpha_next = max(0.01, min(0.20, alpha_next))
-                else:
-                    alpha_next = alpha * 1.01
+        if self.water_rod:
+            hole_z_indices = []
+            if hole_z is not None:
+                for z in hole_z:
+                    idx = (np.abs(z_cells - z)).argmin()
+                    hole_z_indices.append(idx)
             else:
-                alpha_next = 0.06 if delta_P > 0 else 0.04
+                hole_A = []
+
+            alpha = 0.05 # Initial guess : 5% of global mass flow rate
+            alpha_prev = 0.04 
+            delta_P_prev = None
+
+            for secant_iter in range(15): # Max 15 essais pour équilibrer les pressions d'entrée
+                qFlow_wr = alpha * qFlow
+                qFlow_actif = (1 - alpha) * qFlow
+                
+                print(f"\n--- Sécante {secant_iter} : alpha = {alpha:.4f} (WR: {qFlow_wr:.2f} kg/s, Actif: {qFlow_actif:.2f} kg/s) ---")
+
+                v_lat_prev = np.zeros(len(hole_z_indices))
+                v_lat_prev_prev = np.zeros(len(hole_z_indices))
+                omega_dyn = 0.9
+                S_mass_a, S_mom_a, S_h_a = np.zeros(I_z+1), np.zeros(I_z+1), np.zeros(I_z+1)
+                S_mass_w, S_mom_w, S_h_w = np.zeros(I_z+1), np.zeros(I_z+1), np.zeros(I_z+1)
+
+                for ping_pong in range(40): 
+                    
+                    DFM_actif = DFMclass(canal_type, I_z, tInlet, qFlow_actif, pOutlet, fuel_rod_length, 
+                                        fuel_radius, clad_radius, canal_radius * 2.0, numericalMethod, 
+                                        frfaccorel, P2Pcorel, voidFractionCorrel,
+                                        dt=dt, t_tot=t_tot, porosities=porosities, acools=acools, 
+                                        dhs=dhs, phs=phs, kexp=kexp_profile, kcon=kcon_profile, rsin=rsin_profile)
+                    DFM_actif.set_Fission_Power(Powtot, axial_p_form, fraction_pow_fuel)
+                    DFM_actif.update_sources(S_mass_a, S_mom_a, S_h_a)
+                    DFM_actif.resolveDFM()
+
+                    kcon_wr_safe = np.zeros(I_z+1) if kexp_wr is None else np.zeros_like(kexp_wr)
+                    rsin_wr_safe = np.ones(I_z+1) if kexp_wr is None else np.ones_like(kexp_wr)
+                    
+                    DFM_wr = DFMclass(canal_type, I_z, tInlet, qFlow_wr, pOutlet, fuel_rod_length, 
+                                    1e-5, 1e-5, canal_radius * 2.0, numericalMethod, 
+                                    frfaccorel, P2Pcorel, voidFractionCorrel,
+                                    dt=dt, t_tot=t_tot, porosities=porosities_wr, acools=acools_wr, 
+                                    dhs=dhs_wr, phs=p_wr, kexp=kexp_wr, kcon=kcon_wr_safe, rsin=rsin_wr_safe)
+                    DFM_wr.set_Fission_Power(0.0, axial_p_form, fraction_pow_fuel)
+                    DFM_wr.update_sources(S_mass_w, S_mom_w, S_h_w)
+                    DFM_wr.resolveDFM()
+                    
+                    S_mass_a_new, S_mom_a_new, S_h_a_new, S_mass_w_new, S_mom_w_new, S_h_w_new, v_lat_new = compute_crossflow(
+                        DFM_actif, DFM_wr, hole_z_indices, hole_A, Idelchik_enter, Idelchik_exit, rwall_wr, v_lat_prev
+                    )
+                    v_lat_new = np.clip(v_lat_new, -80.0, 80.0) 
+                    if len(v_lat_new) > 0:
+                        error_v_lat = np.max(np.abs(v_lat_new - v_lat_prev))
+                    else:
+                        error_v_lat = 0.0
+
+                    if error_v_lat < 1e-2:
+                        print(f"    Ping-Pong convergé en {ping_pong + 1} itérations (Erreur max: {error_v_lat:.4f} m/s)")
+                        break
+                    
+                    print(f"    Ping-Pong iter {ping_pong+1}: error = {error_v_lat:.4f} m/s, omega_dyn = {omega_dyn:.3f}, v_lat_new = {v_lat_new}")
+
+                    if ping_pong >= 2 and len(v_lat_new) > 0:
+                        delta_actuel = v_lat_new - v_lat_prev
+                        delta_ancien = v_lat_prev - v_lat_prev_prev
+                        dot_product = np.sum(delta_actuel * delta_ancien)
+                        if dot_product <0:
+                            omega_dyn = max(0.05, omega_dyn * 0.5)
+                        else:
+                            omega_dyn = min(1.0, omega_dyn * 1.1)
+                    v_lat_prev_prev = v_lat_prev.copy()
+                    if ping_pong == 0:
+                        v_lat_prev = omega_dyn*v_lat_new
+                        S_mass_a = omega_dyn*S_mass_a_new
+                        S_mom_a = omega_dyn*S_mom_a_new
+                        S_h_a = omega_dyn*S_h_a_new
+                        S_mass_w = omega_dyn*S_mass_w_new
+                        S_mom_w = omega_dyn*S_mom_w_new
+                        S_h_w = omega_dyn*S_h_w_new
+                    else:
+                        v_lat_prev = omega_dyn*v_lat_new + (1-omega_dyn)*v_lat_prev
+                        S_mass_a = omega_dyn*S_mass_a_new + (1-omega_dyn)*S_mass_a
+                        S_mom_a = omega_dyn*S_mom_a_new + (1-omega_dyn)*S_mom_a
+                        S_h_a = omega_dyn*S_h_a_new + (1-omega_dyn)*S_h_a
+                        S_mass_w = omega_dyn*S_mass_w_new + (1-omega_dyn)*S_mass_w
+                        S_mom_w = omega_dyn*S_mom_w_new + (1-omega_dyn)*S_mom_w
+                        S_h_w = omega_dyn*S_h_w_new + (1-omega_dyn)*S_h_w
+
+                K_local_orifice = 1.42
+                rho_in_a = DFM_actif.rhoL[-1][0]
+                U_in_a = DFM_actif.U[-1][0]
+                P_in_actif = DFM_actif.P[-1][0] 
+                r_seo = 0.026 # Side entry orifice radius
+                A_seo = np.pi * r_seo**2
+                K_orifice_actif = K_local_orifice * (DFM_actif.areaMatrix[0] / A_seo)**2
+                DeltaP_orifice_actif = 0.5 * rho_in_a * U_in_a**2 * K_orifice_actif
+                P_plenum_actif = P_in_actif + DeltaP_orifice_actif
+
+                rho_in_w = DFM_wr.rhoL[-1][0]
+                U_in_w = DFM_wr.U[-1][0]
+                P_in_wr = DFM_wr.P[-1][0] 
+                r_gicleur_wr = 0.0030
+                A_gicleur = np.pi * r_gicleur_wr**2
+                K_orifice_wr = K_local_orifice * (DFM_wr.areaMatrix[0] / (2*A_gicleur))**2
+                DeltaP_orifice_wr = 0.5 * rho_in_w * U_in_w**2 * K_orifice_wr
+                P_plenum_wr = P_in_wr + DeltaP_orifice_wr
+                
+                delta_P = P_plenum_actif - P_plenum_wr
+                
+                print(f"P_plenum Actif: {P_plenum_actif:.0f} Pa | P_plenum WR: {P_plenum_wr:.0f} Pa | Différence: {delta_P:.1f} Pa")           
+
+                if abs(delta_P) < 500.0:
+                    print(">>> Convergence du débit d'entrée (alpha) atteinte !")
+                    break
+
+                if delta_P_prev is not None:
+                    if delta_P != delta_P_prev: # Sécurité mathématique
+                        derivative = (delta_P - delta_P_prev) / (alpha - alpha_prev)
+                        alpha_next = alpha - delta_P / derivative
+                        alpha_next = max(0.01, min(0.20, alpha_next))
+                    else:
+                        alpha_next = alpha * 1.01
+                else:
+                    alpha_next = 0.06 if delta_P > 0 else 0.04
+                
+                alpha_prev = alpha
+                delta_P_prev = delta_P
+                alpha = alpha_next
             
-            alpha_prev = alpha
-            delta_P_prev = delta_P
-            alpha = alpha_next
-        
-        self.convection_sol = DFM_actif
-        self.convection_wr = DFM_wr
-        self.alpha_final = alpha
+            self.convection_sol = DFM_actif
+            self.convection_wr = DFM_wr
+            self.alpha_final = alpha
+        else:
+            # --- RÉSOLUTION SIMPLE (SANS WATER ROD) ---
+            print("\n--- Résolution sans Water Rod (canal actif seul) ---")
+            qFlow_actif = self.qFlow # 100% du débit va dans l'actif
+            
+            # Pas d'échange latéral, donc sources = 0
+            S_mass_a, S_mom_a, S_h_a = np.zeros(I_z+1), np.zeros(I_z+1), np.zeros(I_z+1)
+            
+            DFM_actif = DFMclass(canal_type, I_z, tInlet, qFlow_actif, pOutlet, fuel_rod_length, 
+                                 fuel_radius, clad_radius, canal_radius * 2.0, numericalMethod, 
+                                 frfaccorel, P2Pcorel, voidFractionCorrel,
+                                 dt=dt, t_tot=t_tot, porosities=porosities, acools=acools, 
+                                 dhs=dhs, phs=phs, kexp=kexp_profile, kcon=kcon_profile, rsin=rsin_profile)
+                                 
+            DFM_actif.set_Fission_Power(Powtot, axial_p_form, fraction_pow_fuel)
+            DFM_actif.update_sources(S_mass_a, S_mom_a, S_h_a)
+            DFM_actif.resolveDFM()
+            
+            self.convection_sol = DFM_actif
+            self.convection_wr = None  # Pas de water rod
+            self.alpha_final = 0.0
 
         if self.solveConduction:
             self.Tsurf = self.convection_sol.compute_T_surf()
@@ -454,22 +479,28 @@ class pyTHM_solver:
 
     def plot_actif_vs_wr(self):
         """
-        Génère une figure complète comparant les paramètres thermohydrauliques
-        du canal actif et du water rod en fonction de la hauteur z.
+        Génère une figure complète des paramètres thermohydrauliques.
+        Si le water rod est activé, compare Actif et WR. Sinon, affiche uniquement l'Actif.
         """
         import matplotlib.pyplot as plt
+        import os
 
-        # Extraction des coordonnées axiales (z)
+        # Extraction des coordonnées axiales (z) de l'actif
         z = self.convection_sol.z_mesh
-        z_wr = self.convection_wr.z_mesh
+        has_wr = hasattr(self, 'convection_wr') and self.convection_wr is not None
 
         # Création d'une figure avec 4 lignes et 2 colonnes
         fig, axs = plt.subplots(4, 2, figsize=(16, 20))
-        fig.suptitle(f"Comparaison Thermohydraulique : Actif vs Water Rod\nCas : {self.name}", fontsize=16, fontweight='bold')
+        
+        if has_wr:
+            fig.suptitle(f"Comparaison Thermohydraulique : Actif vs Water Rod\nCas : {self.name}", fontsize=16, fontweight='bold')
+            z_wr = self.convection_wr.z_mesh
+        else:
+            fig.suptitle(f"Profil Thermohydraulique : Canal Actif Seul\nCas : {self.name}", fontsize=16, fontweight='bold')
 
         # --- 1. Pression ---
         axs[0, 0].plot(z, self.convection_sol.P[-1], label="Actif", color="darkred", linewidth=2)
-        axs[0, 0].plot(z_wr, self.convection_wr.P[-1], label="Water Rod", color="salmon", linestyle="--", linewidth=2)
+        if has_wr: axs[0, 0].plot(z_wr, self.convection_wr.P[-1], label="Water Rod", color="salmon", linestyle="--", linewidth=2)
         axs[0, 0].set_title("Pression", fontweight='bold')
         axs[0, 0].set_ylabel("Pression [Pa]")
         axs[0, 0].grid(True, linestyle=':', alpha=0.7)
@@ -477,9 +508,10 @@ class pyTHM_solver:
 
         # --- 2. Densités (Mélange et Liquide) ---
         axs[0, 1].plot(z, self.convection_sol.rho[-1], label="Mélange (Actif)", color="indigo", linewidth=2)
-        axs[0, 1].plot(z_wr, self.convection_wr.rho[-1], label="Mélange (WR)", color="mediumpurple", linestyle="--", linewidth=2)
         axs[0, 1].plot(z, self.convection_sol.rhoL[-1], label="Liquide (Actif)", color="blue", alpha=0.5)
-        axs[0, 1].plot(z_wr, self.convection_wr.rhoL[-1], label="Liquide (WR)", color="cyan", linestyle="--", alpha=0.5)
+        if has_wr:
+            axs[0, 1].plot(z_wr, self.convection_wr.rho[-1], label="Mélange (WR)", color="mediumpurple", linestyle="--", linewidth=2)
+            axs[0, 1].plot(z_wr, self.convection_wr.rhoL[-1], label="Liquide (WR)", color="cyan", linestyle="--", alpha=0.5)
         axs[0, 1].set_title("Densités", fontweight='bold')
         axs[0, 1].set_ylabel("Densité [kg/m³]")
         axs[0, 1].grid(True, linestyle=':', alpha=0.7)
@@ -487,7 +519,7 @@ class pyTHM_solver:
 
         # --- 3. Taux de vide ---
         axs[1, 0].plot(z, self.convection_sol.voidFraction[-1], label="Actif", color="darkgreen", linewidth=2)
-        axs[1, 0].plot(z_wr, self.convection_wr.voidFraction[-1], label="Water Rod", color="lightgreen", linestyle="--", linewidth=2)
+        if has_wr: axs[1, 0].plot(z_wr, self.convection_wr.voidFraction[-1], label="Water Rod", color="lightgreen", linestyle="--", linewidth=2)
         axs[1, 0].set_title("Taux de vide", fontweight='bold')
         axs[1, 0].set_ylabel("Fraction [-]")
         axs[1, 0].grid(True, linestyle=':', alpha=0.7)
@@ -495,7 +527,7 @@ class pyTHM_solver:
 
         # --- 4. Titre thermodynamique (Quality) ---
         axs[1, 1].plot(z, self.convection_sol.xTh[-1], label="Actif", color="darkorange", linewidth=2)
-        axs[1, 1].plot(z_wr, self.convection_wr.xTh[-1], label="Water Rod", color="gold", linestyle="--", linewidth=2)
+        if has_wr: axs[1, 1].plot(z_wr, self.convection_wr.xTh[-1], label="Water Rod", color="gold", linestyle="--", linewidth=2)
         axs[1, 1].set_title("Titre thermodynamique", fontweight='bold')
         axs[1, 1].set_ylabel("Titre [-]")
         axs[1, 1].grid(True, linestyle=':', alpha=0.7)
@@ -503,7 +535,7 @@ class pyTHM_solver:
 
         # --- 5. Température du fluide ---
         axs[2, 0].plot(z, self.convection_sol.T_water, label="Actif", color="red", linewidth=2)
-        axs[2, 0].plot(z_wr, self.convection_wr.T_water, label="Water Rod", color="pink", linestyle="--", linewidth=2)
+        if has_wr: axs[2, 0].plot(z_wr, self.convection_wr.T_water, label="Water Rod", color="pink", linestyle="--", linewidth=2)
         axs[2, 0].set_title("Température du fluide", fontweight='bold')
         axs[2, 0].set_ylabel("Température [K]")
         axs[2, 0].grid(True, linestyle=':', alpha=0.7)
@@ -513,9 +545,10 @@ class pyTHM_solver:
         axs[2, 1].plot(z, self.convection_sol.U[-1], label="Mélange (Actif)", color="black", linewidth=2)
         axs[2, 1].plot(z, self.convection_sol.Ug, label="Vapeur (Actif)", color="red", linewidth=1.5)
         axs[2, 1].plot(z, self.convection_sol.Ul, label="Liquide (Actif)", color="blue", linewidth=1.5)
-        axs[2, 1].plot(z_wr, self.convection_wr.U[-1], label="Mélange (WR)", color="gray", linestyle="--", linewidth=2)
-        axs[2, 1].plot(z_wr, self.convection_wr.Ug, label="Vapeur (WR)", color="salmon", linestyle="--", linewidth=1.5)
-        axs[2, 1].plot(z_wr, self.convection_wr.Ul, label="Liquide (WR)", color="cyan", linestyle="--", linewidth=1.5)
+        if has_wr:
+            axs[2, 1].plot(z_wr, self.convection_wr.U[-1], label="Mélange (WR)", color="gray", linestyle="--", linewidth=2)
+            axs[2, 1].plot(z_wr, self.convection_wr.Ug, label="Vapeur (WR)", color="salmon", linestyle="--", linewidth=1.5)
+            axs[2, 1].plot(z_wr, self.convection_wr.Ul, label="Liquide (WR)", color="cyan", linestyle="--", linewidth=1.5)
         axs[2, 1].set_title("Vitesses des phases", fontweight='bold')
         axs[2, 1].set_ylabel("Vitesse [m/s]")
         axs[2, 1].grid(True, linestyle=':', alpha=0.7)
@@ -523,7 +556,7 @@ class pyTHM_solver:
 
         # --- 7. Profil de puissance ---
         axs[3, 0].plot(z, self.convection_sol.q__, label="Actif", color="darkmagenta", linewidth=2)
-        axs[3, 0].plot(z_wr, self.convection_wr.q__, label="Water Rod", color="violet", linestyle="--", linewidth=2)
+        if has_wr: axs[3, 0].plot(z_wr, self.convection_wr.q__, label="Water Rod", color="violet", linestyle="--", linewidth=2)
         axs[3, 0].set_title("Profil de puissance (Densité volumique)", fontweight='bold')
         axs[3, 0].set_ylabel("Puissance [W/m³]")
         axs[3, 0].grid(True, linestyle=':', alpha=0.7)
@@ -533,7 +566,6 @@ class pyTHM_solver:
         axs[3, 1].axis('off')
 
         # Ajout des labels X pour chaque graphique
-        # Ajout des labels X pour chaque graphique
         for ax in axs.flat:
             if ax.has_data():
                 ax.set_xlabel("Position axiale z [m]")
@@ -541,23 +573,16 @@ class pyTHM_solver:
         # Ajustement des espaces entre les graphiques
         plt.tight_layout(rect=[0, 0.03, 1, 0.96])
         
-        # --- NOUVELLE LOGIQUE DE SAUVEGARDE ---
-        import os
-        
-        # Définition du chemin du dossier cible
+        # --- LOGIQUE DE SAUVEGARDE ---
         results_dir = "results"
-        
-        # Création du dossier s'il n'existe pas déjà (équivalent de mkdir -p)
         os.makedirs(results_dir, exist_ok=True)
         
-        # Construction du chemin complet du fichier
-        filepath = os.path.join(results_dir, f"{self.name}_actif_vs_wr.png")
+        suffix = "actif_vs_wr" if has_wr else "actif_seul"
+        filepath = os.path.join(results_dir, f"{self.name}_{suffix}.png")
         
-        # Sauvegarde en haute résolution (300 dpi)
         plt.savefig(filepath, dpi=300)
-        print(f">>> Graphique comparatif sauvegardé avec succès sous : {filepath}")
+        print(f">>> Graphique sauvegardé avec succès sous : {filepath}")
         
-        # On ferme la figure pour libérer la mémoire (très important si vous lancez des boucles de tests !)
         plt.close(fig)
     
 

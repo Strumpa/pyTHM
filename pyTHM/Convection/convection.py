@@ -92,6 +92,7 @@ class DFMclass():
         #Porous media parameters
         self.poro = np.zeros(self.nFaces)
         self.areaMatrix = np.zeros(self.nFaces)
+        self.acools = acools
         self.D_h = np.zeros(self.nFaces)
         self.phs = np.zeros(self.nFaces)
 
@@ -149,7 +150,7 @@ class DFMclass():
         else:
             self.sousRelaxFactor = 1
         self.epsOuterIteration = 1e-4
-        self.maxOuterIteration = 1000
+        self.maxOuterIteration = 50
 
         #Universal constant
         self.g = 9.81 #m/s^2
@@ -353,19 +354,9 @@ class DFMclass():
                 di =  self.S_mass[i])
 
             #Inside the pressure submatrix
-            elif i == self.nFaces:
-                DI = -((epsilon_old[i+1] * rho_g_old[i+1] * rho_l_old[i+1] * V_gj_old[i+1]**2 * areaMatrix[i+1] )/ ((1 - epsilon_old[i+1])*rho_old[i+1]) )  + ((epsilon_old[i] * rho_g_old[i] * rho_l_old[i] * V_gj_old[i]**2 * areaMatrix[i] )/ ((1 - epsilon_old[i])*rho_old[i]) )     
-                VAR_VFM_Class.set_ADi(self.nFaces, 
-                ci = 0,
-                ai = - areaMatrix[i],
-                bi = areaMatrix[i],
-                di = - (((rho_old[i+1]+ rho_old[i])* self.g/2) * self.DV[i%self.nFaces] / 2) + DI + self.S_mom[i%self.nFaces])
-            
-                VAR_VFM_Class.fillingOutsideBoundary(i, i-self.nFaces,
-                ai = - rho_old[i]*VAR_old[i-self.nFaces]*areaMatrix_old_2[i],
-                bi = rho_old[i+1]*VAR_old[i-self.nFaces+1]*areaMatrix_old_1[i+1])
-
-            elif i > self.nFaces and i < 2*self.nFaces-1:
+            elif i >= self.nFaces and i < 2*self.nFaces-1:
+                idx = i - self.nFaces
+                #if abs(areaMatrix[i] - areaMatrix[i+1]) < 1e-6:
                 DI = -((epsilon_old[i+1] * rho_g_old[i+1] * rho_l_old[i+1] * V_gj_old[i+1]**2 * areaMatrix[i+1] )/ ((1 - epsilon_old[i+1])*rho_old[i+1]) )  + ((epsilon_old[i] * rho_g_old[i] * rho_l_old[i] * V_gj_old[i]**2 * areaMatrix[i] )/ ((1 - epsilon_old[i])*rho_old[i]) )     
                 VAR_VFM_Class.set_ADi(i, ci = 0,
                 ai = - areaMatrix[i],
@@ -375,6 +366,23 @@ class DFMclass():
                 VAR_VFM_Class.fillingOutsideBoundary(i, i-self.nFaces,
                 ai = - rho_old[i]*VAR_old[i-self.nFaces]*areaMatrix_old_2[i],
                 bi = rho_old[i+1]*VAR_old[i+1-self.nFaces]*areaMatrix_old_1[i+1])
+                # else:
+                #     u_amont = U_old[idx]
+                #     u_aval = U_old[idx+1]
+                #     rho_amont = rho_old[i]
+                #     rho_aval = rho_old[i+1]
+                #     rho_mix = (rho_amont + rho_aval)/2
+                #     dP_bernoulli = (rho_mix/2) * (u_amont**2 - u_aval**2)
+                #     K_tot = self.kexp_face[idx] + self.kcon_face[idx]
+                #     dP_perte = K_tot*0.5*rho_aval*(u_aval**2)
+                #     VAR_VFM_Class.set_ADi(i, ci = 0,
+                #         ai = - 1.0,
+                #         bi = 1.0,
+                #         di = dP_bernoulli - dP_perte)
+                #     VAR_VFM_Class.fillingOutsideBoundary(i, idx,
+                #         ai = 0.0, bi=0.0)
+
+
 
         
         self.FVM = VAR_VFM_Class
@@ -593,6 +601,64 @@ class DFMclass():
         #Update hInlet
         self.hInlet = IAPWS97(T = self.tInlet, P = self.P[-1][0]*10**(-6)).h*1000 #J/kg
 
+    def update_jump_source(self):
+        self.S_mom = np.zeros(self.nFaces)
+        
+        # 1. Instanciation de l'objet pour les corrélations diphasiques
+        water = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
+        # Connexion en temps réel pour que les corrélations utilisent les bonnes valeurs
+        water.xThTEMP = self.xTh[-1]
+        water.voidFractionTEMP = self.voidFraction[-1]
+        water.rholTEMP = self.rhoL[-1]
+        water.rhogTEMP = self.rhoG[-1]
+        water.rhoTEMP = self.rho[-1]
+        
+        for i in range(1, self.nFaces - 1):
+            A1 = self.acools[i-1]
+            # La cellule aval est i (sauf à la dernière face)
+            A2 = self.acools[i] if i < self.nCells else self.acools[-1]
+            A_face = self.areaMatrix[i]
+            
+            u_m = self.U[-1][i]
+            rho_m = self.rho[-1][i]
+            rho_l = self.rhoL[-1][i] 
+            
+            # Débit massique local à travers la face
+            m_dot = rho_m * u_m * A_face
+            
+            force_artifact_N = 0.0
+            force_perte_N = 0.0
+            
+            # --- 1. CORRECTION DE L'ARTEFACT NUMÉRIQUE DE BERNOULLI (FVM) ---
+            if abs(A1 - A2) > 1e-6:
+                # A. Ce que la matrice FVM calcule REELLEMENT par télescopage conservatif
+                # C'est exactement (rho * U_aval^2 - rho * U_amont^2)
+                dP_fvm = (m_dot**2 / rho_m) * (1.0/(A2**2) - 1.0/(A1**2))
+                
+                # B. Ce que la physique dicte (Récupération pure de Bernoulli)
+                dP_ana = (m_dot**2 / (2.0 * rho_m)) * (1.0/(A2**2) - 1.0/(A1**2))
+                
+                # L'artefact est l'erreur native de la matrice FVM. 
+                artifact = dP_fvm - dP_ana
+                force_artifact_N = artifact * A_face
+
+            # --- 2. CALCUL EXACT DES PERTES DE CHARGE SINGULIÈRES (K) ---
+            if self.kexp_face[i] > 1e-6 or self.kcon_face[i] > 1e-6:
+                # Le K de PARCS (ou StarterDD) est toujours calibré sur la vitesse de la cellule aval (A2)
+                G_true = m_dot / A2
+                facteur_cinetique = 0.5 * (G_true**2) / rho_l
+                
+                phi2_exp = water.getPhi2Expansion(i)
+                phi2_con = water.getPhi2Contraction(i)
+                
+                dP_perte = (self.kexp_face[i] * phi2_exp + self.kcon_face[i] * phi2_con) * facteur_cinetique
+                force_perte_N = dP_perte * A_face
+                
+            # --- 3. INJECTION DANS LE TERME SOURCE ---
+            if abs(force_artifact_N) > 0.0 or abs(force_perte_N) > 0.0:
+                # On ajoute la correction de l'artefact et on retire la force de résistance fluide
+                self.S_mom[i] += force_artifact_N - force_perte_N
+
     #Main function to solve the drift flux model
     def resolveDFM(self):
 
@@ -610,7 +676,7 @@ class DFMclass():
 
             #Loop for the outer iterations (velocity-pressure and enthalpy)
             for k in range(self.maxOuterIteration):
-                
+                self.update_jump_source()
                 self.createSystemVelocityPressure()
                 resolveSystem = numericalResolution(self.FVM,self.mergeVar(self.U[-1], self.P[-1]), self.epsInnerIteration, self.maxInnerIteration, self.numericalMethod)
                 Utemp, Ptemp = self.splitVar(resolveSystem.x)

@@ -160,6 +160,7 @@ def test_GE14_cases():
                     kexp_profile=kexp_profile,
                     kcon_profile=kcon_profile,
                     rsin_profile=rsin_profile,
+                    water_rod=True,
                     acools_wr=acools_wr,
                     porosities_wr=porosities_wr,
                     dhs_wr=dhs_wr,
