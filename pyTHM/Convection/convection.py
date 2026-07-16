@@ -650,6 +650,8 @@ class DFMclass():
                 
                 phi2_exp = water.getPhi2Expansion(i)
                 phi2_con = water.getPhi2Contraction(i)
+                # phi2_exp = 1.0
+                # phi2_con = 1.0
                 
                 dP_perte = (self.kexp_face[i] * phi2_exp + self.kcon_face[i] * phi2_con) * facteur_cinetique
                 force_perte_N = dP_perte * A_face

@@ -201,7 +201,7 @@ class pyTHM_solver:
                 rho_in_w = DFM_wr.rhoL[-1][0]
                 U_in_w = DFM_wr.U[-1][0]
                 P_in_wr = DFM_wr.P[-1][0] 
-                r_gicleur_wr = 0.0030
+                r_gicleur_wr = 0.0040
                 A_gicleur = np.pi * r_gicleur_wr**2
                 K_orifice_wr = K_local_orifice * (DFM_wr.areaMatrix[0] / (2*A_gicleur))**2
                 DeltaP_orifice_wr = 0.5 * rho_in_w * U_in_w**2 * K_orifice_wr

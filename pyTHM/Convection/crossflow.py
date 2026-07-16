@@ -64,7 +64,10 @@ def compute_crossflow(DFM_actif, DFM_wr, hole_z_indices, hole_A, Idelchik_enter,
             R_tot = R_paroi + R_conv_a + R_conv_w
             
             # --- 4. Calcul du Flux ---
-            delta_T = DFM_wr.T_water[c] - DFM_actif.T_water[c]
+            T_a = FAST_IAPWS.get_sub_T(P_a_MPa, DFM_actif.H[-1][c] * 1e-3)
+            T_w = FAST_IAPWS.get_sub_T(P_w_MPa, DFM_wr.H[-1][c] * 1e-3)
+            
+            delta_T = T_w - T_a
             Q_cond = (delta_T / R_tot) * DFM_actif.Dz
             
             # Affectation à la face sortante
