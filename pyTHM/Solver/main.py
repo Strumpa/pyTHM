@@ -15,7 +15,7 @@ import re
 
 class pyTHM_solver:
     def __init__(self, case_name, canal_type,
-                 canal_radius, fuel_radius, gap_radius, clad_radius, fuel_rod_length, tInlet, pOutlet, qFlow, Powtot, axial_p_form, fraction_pow_fuel,
+                 canal_radius, fuel_radius, gap_radius, clad_radius, pin_pitch, fuel_rod_length, tInlet, pOutlet, qFlow, Powtot, axial_p_form, fraction_pow_fuel,
                  k_fuel, H_gap, k_clad, I_z, I_f, I_c, plot_at_z, solveConduction,
                  dt, t_tot, frfaccorel = 'base', P2Pcorel = 'base', voidFractionCorrel = 'GEramp', numericalMethod= 'FVM', 
                  porosities=None, acools=None, dhs=None, phs=None, kexp_profile=None, kcon_profile=None, rsin_profile=None, water_rod=True,
@@ -59,6 +59,7 @@ class pyTHM_solver:
         self.r_f = fuel_radius # fuel pin radius in meters
         self.gap_r = gap_radius # gap radius in meters, used to determine mesh elements for constant surface discretization
         self.clad_r = clad_radius # clad radius in meters, used to determine mesh elements for constant surface discretization
+        self.pin_pitch = pin_pitch # distance between the centers of two adjacent fuel rods in meters
         self.k_fuel = k_fuel # thermal conductivity coefficient in fuel W/m/K
         self.H_gap = H_gap # Heat transfer coefficient through gap W/m^2/K
         self.k_clad = k_clad # thermal conductivity coefficient in clad W/m/K
@@ -94,7 +95,7 @@ class pyTHM_solver:
         print(f'self.dt: {self.dt}')
         print(f'Courant number: {self.uInlet*self.dt/(self.Lf/self.I_z)}')
         print(f"Numerical Method {numericalMethod}")
-        self.convection_sol = DFMclass(self.canal_type, self.I_z, self.tInlet, self.qFlow, self.pOutlet, self.Lf, self.r_f, self.clad_r, self.r_w, self.numericalMethod, self.frfaccorel, self.P2Pcorel, self.voidFractionCorrel, dt = self.dt, t_tot = self.t_end, porosities = porosities, acools=acools, dhs = dhs, phs = phs, kexp=kexp_profile, kcon=kcon_profile, rsin=rsin_profile)
+        self.convection_sol = DFMclass(self.canal_type, self.I_z, self.tInlet, self.qFlow, self.pOutlet, self.Lf, self.r_f, self.clad_r, self.pin_pitch, self.r_w, self.numericalMethod, self.frfaccorel, self.P2Pcorel, self.voidFractionCorrel, dt = self.dt, t_tot = self.t_end, porosities = porosities, acools=acools, dhs = dhs, phs = phs, kexp=kexp_profile, kcon=kcon_profile, rsin=rsin_profile)
         print(f'Hydraulic diameter: {self.convection_sol.D_h}')
         
         Dz_local = fuel_rod_length / I_z
@@ -127,7 +128,7 @@ class pyTHM_solver:
                 for ping_pong in range(40): 
                     
                     DFM_actif = DFMclass(canal_type, I_z, tInlet, qFlow_actif, pOutlet, fuel_rod_length, 
-                                        fuel_radius, clad_radius, canal_radius * 2.0, numericalMethod, 
+                                        fuel_radius, clad_radius, pin_pitch, canal_radius * 2.0, numericalMethod, 
                                         frfaccorel, P2Pcorel, voidFractionCorrel,
                                         dt=dt, t_tot=t_tot, porosities=porosities, acools=acools, 
                                         dhs=dhs, phs=phs, kexp=kexp_profile, kcon=kcon_profile, rsin=rsin_profile)
@@ -139,7 +140,7 @@ class pyTHM_solver:
                     rsin_wr_safe = np.ones(I_z+1) if kexp_wr is None else np.ones_like(kexp_wr)
                     
                     DFM_wr = DFMclass(canal_type, I_z, tInlet, qFlow_wr, pOutlet, fuel_rod_length, 
-                                    1e-5, 1e-5, canal_radius * 2.0, numericalMethod, 
+                                    1e-5, 1e-5, pin_pitch, canal_radius * 2.0, numericalMethod, 
                                     frfaccorel, P2Pcorel, voidFractionCorrel,
                                     dt=dt, t_tot=t_tot, porosities=porosities_wr, acools=acools_wr, 
                                     dhs=dhs_wr, phs=p_wr, kexp=kexp_wr, kcon=kcon_wr_safe, rsin=rsin_wr_safe)
@@ -241,7 +242,7 @@ class pyTHM_solver:
             S_mass_a, S_mom_a, S_h_a = np.zeros(I_z+1), np.zeros(I_z+1), np.zeros(I_z+1)
             
             DFM_actif = DFMclass(canal_type, I_z, tInlet, qFlow_actif, pOutlet, fuel_rod_length, 
-                                 fuel_radius, clad_radius, canal_radius * 2.0, numericalMethod, 
+                                 fuel_radius, clad_radius, pin_pitch, canal_radius * 2.0, numericalMethod, 
                                  frfaccorel, P2Pcorel, voidFractionCorrel,
                                  dt=dt, t_tot=t_tot, porosities=porosities, acools=acools, 
                                  dhs=dhs, phs=phs, kexp=kexp_profile, kcon=kcon_profile, rsin=rsin_profile)

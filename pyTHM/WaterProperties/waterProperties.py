@@ -125,7 +125,7 @@ class statesVariables():
     - getReynoldsNumber(i): Computes the Reynolds number for flow in a given cell.
     """
 
-    def __init__(self, U, P, H, voidFraction, D_h, areaMatrix, poro, DV, voidFractionCorrel, frfaccorel, P2Pcorel, Dz, q__, phs, qFlow, rf, rw, kexp, kcon, rsin):
+    def __init__(self, U, P, H, voidFraction, clad_radius, pin_pitch, pitch, D_h, areaMatrix, poro, DV, voidFractionCorrel, frfaccorel, P2Pcorel, Dz, q__, phs, qFlow, rf, rw, kexp, kcon, rsin):
         
         self.nCells = len(U)
         self.U = U
@@ -151,6 +151,9 @@ class statesVariables():
         self.kexp = kexp
         self.kcon = kcon
         self.rsin = rsin
+        self.clad_radius = clad_radius
+        self.pin_pitch = pin_pitch
+        self.pitch = pitch
     #Create the array to store the temporary values of the variables
     def createFields(self):
         self.areaMatrixTEMP = np.ones(self.nCells)
@@ -189,6 +192,9 @@ class statesVariables():
         
         elif self.voidFractionCorrel == 'Hibiki_Al-Saif':
             self.Hibiki_Al_Saif()
+
+        elif self.voidFractionCorrel == 'Ozaki':
+            self.Ozaki()
         else:
             raise ValueError('Invalid void fraction correlation model')
 
@@ -374,6 +380,56 @@ class statesVariables():
             self.areaMatrix_1TEMP[i], self.areaMatrix_2TEMP[i] = self.getAreas(i)
             self.Rel[i] = self.getReynoldsNumberLiquidD5(i)
 
+    #Update the values of the variables using the selected void fraction correlation model: Ozaki
+    def Ozaki(self):
+        self.rholTEMP, self.rhogTEMP, self.rhoTEMP, self.voidFractionTEMP, self.DhfgTEMP, self.fTEMP, self.areaMatrix_1TEMP, self.areaMatrix_2TEMP, self.areaMatrix_2TEMP, self.VgjTEMP, self.C0TEMP, self.VgjPrimeTEMP = np.ones(self.nCells), np.ones(self.nCells), np.ones(self.nCells), np.ones(self.nCells), np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells)
+        self.voidFractionOld = self.voidFraction
+        self.Ul = np.ones(self.nCells)
+        self.Ug = np.ones(self.nCells)
+        self.Rel = np.ones(self.nCells)
+        for i in range(self.nCells):
+            self.rholTEMP[i], self.rhogTEMP[i], self.rhoTEMP[i] = self.getDensity(i)
+            self.C0TEMP[i] = self.getC0(i)
+            self.VgjTEMP[i] = self.getVgj(i)
+            self.VgjPrimeTEMP[i] = self.getVgj_prime(i)
+            self.DhfgTEMP[i] = self.getHfg(i)
+            omega = 0.5 # Relaxation
+            for j in range(1000):
+                voidFractionNew = self.getVoidFraction(i)
+                if np.linalg.norm(voidFractionNew - self.voidFractionTEMP[i]) < 1e-3:
+                    self.voidFractionTEMP[i] = voidFractionNew
+                    self.rhoTEMP[i] = self.getDensity(i)[2]
+                    self.C0TEMP[i] = self.getC0(i)
+                    self.VgjTEMP[i] = self.getVgj(i)
+                    self.VgjPrimeTEMP[i] = self.getVgj_prime(i)
+                    break
+                elif j == 999:
+                    raise ValueError('Convergence in update fields not reached for Ozaki')
+                else:
+                    self.voidFractionTEMP[i] = omega * voidFractionNew + (1.0 - omega) * self.voidFractionTEMP[i]
+                    
+                    # Bornes physiques strictes
+                    if self.voidFractionTEMP[i] < 0.0:
+                        self.voidFractionTEMP[i] = 0.0
+                    elif self.voidFractionTEMP[i] > 0.999:
+                        self.voidFractionTEMP[i] = 0.999
+
+                    if self.xThTEMP[i] < 0.0:
+                        self.xThTEMP[i] = 0.0
+                    elif self.xThTEMP[i] > 1.0:
+                        self.xThTEMP[i] = 1.0
+                        
+                    self.rhoTEMP[i] = self.getDensity(i)[2]
+                    self.C0TEMP[i] = self.getC0(i)
+                    self.VgjTEMP[i] = self.getVgj(i)
+                    self.VgjPrimeTEMP[i] = self.getVgj_prime(i)
+
+            self.fTEMP[i] = self.getFrictionFactor(i)
+            self.areaMatrix_1TEMP[i], self.areaMatrix_2TEMP[i] = self.getAreas(i)
+            self.Ul[i] = self.getUl(i)
+            self.Ug[i] = self.getUg(i)
+            self.Rel[i] = self.getReynoldsNumberLiquid(i)
+
     #Get the density of the liquid and vapor phases for a given cell
     def getDensity(self, i):
         P = self.P[i]
@@ -411,24 +467,36 @@ class statesVariables():
                 if xeq >= Xs:
                     QUALITY = xeq
                 else:
-                    rhol = self.rholTEMP[i]
-                    rhog = self.rhogTEMP[i]
+                    # --- 1. CORRECTION DES DENSITÉS ---
+                    # On calcule les densités exactes via IAPWS pour éviter l'AttributeError
+                    # et s'affranchir de self.rholTEMP qui n'est pas encore mis à jour.
+                    p_mpa = p * 1e-6
+                    H_liq_eval = min_lisse(H * 1e-3, hl, 0.5)
+                    rhol = FAST_IAPWS.get_sub_rhol(p_mpa, H_liq_eval)
+                    rhog = FAST_IAPWS.get_rhog(p_mpa)
+                    
                     u = self.U[i]
-                    muf = FAST_IAPWS.get_mug(p*(10**(-6)))
+                    
+                    # --- 2. CORRECTION DES PROPRIÉTÉS DU LIQUIDE ---
+                    # Le modèle exige les propriétés du LIQUIDE (suffixe 'l') 
+                    # et non de la vapeur (suffixe 'g') !
+                    muf = FAST_IAPWS.get_mul(p_mpa)
                     Re = rhol * abs(u) * self.D_h[i] / muf
 
-                    Cpf = FAST_IAPWS.get_cpg(p*(10**(-6)))
-                    k_f = FAST_IAPWS.get_kg(p*(10**(-6)))
+                    Cpf = FAST_IAPWS.get_cpl(p_mpa)
+                    k_f = FAST_IAPWS.get_kl(p_mpa)
                     Pr = Cpf * muf / k_f
 
-                
-                    qdp = self.q__[i] * self.DV[i] / (2 * np.pi * self.rw * self.height)
+                    # --- 3. CORRECTION DES INDEX HORS-LIMITES ---
+                    idx_q = min(i, len(self.q__) - 1)
+                    idx_dv = min(i, len(self.DV) - 1)
+                    qdp = self.q__[idx_q] * self.DV[idx_dv] / (2 * np.pi * self.rw * self.height)
 
                     # Calculate heat transfer coefficients
                     hb = np.exp(p / 4.35e6) / (22.7)**2 * 1000.0  # W/(m^2·K)
                     Chn = 0.2 / 4.0 * self.D_h[i] / self.rf
                     hhn = Chn * Re**0.662 * Pr * k_f / (self.D_h[i])
-                    Cdb = (0.033 *self.areaMatrix[i] / (self.areaMatrix[i]/self.poro[i]) + 0.013)
+                    Cdb = (0.033 * self.areaMatrix[i] / (self.areaMatrix[i]/self.poro[i]) + 0.013)
                     hdb = Cdb * Re**0.8 * Pr**0.4 * k_f / (self.D_h[i])
 
                     # Intermediate calculations
@@ -436,10 +504,10 @@ class statesVariables():
                     tmp2 = 2.0 * hdb**2 * (hhn + hdb / 2.0) + 8.0 * qdp * hb * (hdb + hhn)
                     tmp3 = qdp * (4.0 * hb * qdp + hdb**2)
 
-                    # Calculate characteristic quality xd  ///////////////PROBLEM HERE
+                    # Calculate characteristic quality xd
                     delta_h = hg - hl
                     xd = -Cpf / (delta_h) * (
-                    (-tmp2 + np.sqrt(tmp2**2 - 4.0 * tmp1 * tmp3)) / (2.0 * tmp1)
+                        (-tmp2 + np.sqrt(tmp2**2 - 4.0 * tmp1 * tmp3)) / (2.0 * tmp1)
                     )
 
                     # Determine quality based on xeq and xd
@@ -532,8 +600,15 @@ class statesVariables():
         
         if self.voidFractionCorrel == 'HEM1':
             return 0
-        
+
+        # Issu des papiers de Hibiki et al. et Al-Saif et al.: 
+        # Drift-flux model for upward dispersed two-phase flows in vertical medium-to-large round tubes
+        # Accurate modeling of annular gas-water flow across diverse inclination angles using an advanced drift-flux correlation
         if self.voidFractionCorrel == 'Hibiki_Al-Saif':
+            if self.rhogTEMP[i] == 0:
+                return 0    
+            if self.rholTEMP[i] == 0:
+                return 0
             P = self.P[i]
             H = self.H[i]
             hl, hg = self.getPhasesEnthalpy(i)
@@ -551,15 +626,15 @@ class statesVariables():
             sigma = FAST_IAPWS.get_sigma(P*(10**(-6)))
             C_inf = 1.393 - 0.015*np.log(Re)
             eps_tran = (1 + 4*rho_g/rho_l)*np.sqrt(rho_l/rho_g)/(C_inf*(C_inf-1)) - 4*rho_g/rho_l
-            La = (sigma/(rho_l-rho_g*self.g))**0.5
+            La = (sigma/((rho_l-rho_g)*self.g))**0.5
             N_mul = mul/(rho_l*sigma*La)**(0.5)
             N_rho = rho_g/rho_l
             Dh_ratio = D_h/La
             if N_mul <= 2*10**(-3):
                 if Dh_ratio <= 30:
-                    Vgj_KI_plus = 0.019*Dh_ratio**(0.809)*N_rho**(-0.157*N_mul**(-0.562))
+                    Vgj_KI_plus = 0.019*Dh_ratio**(0.809)*N_rho**(-0.157)*N_mul**(-0.562)
                 else:
-                    Vgj_KI_plus = 0.030*N_rho**(-0.157*N_mul**(-0.562))
+                    Vgj_KI_plus = 0.030*N_rho**(-0.157)*N_mul**(-0.562)
             else:
                 if Dh_ratio >= 30:
                     Vgj_KI_plus = 0.92*N_rho**(-0.157)
@@ -576,6 +651,41 @@ class statesVariables():
             Vgj_slug = 0.193*(self.g *  sigma *(rho_l-rho_g) / rho_l**2)**0.25
             Vgj_diphasique = if_lisse(self.voidFractionTEMP[i], eps_tran, 0.05, Vgj_slug, Vgj_bubbly)
             Vgj_final = if_lisse(T, Tsat-DTSUB, 0.5, Vgj_diphasique, 0.0)
+            return Vgj_final
+
+        #Issu du papier de Ozaki et al: Development of drift-flux model based on 8 × 8 BWR rod bundle geometry experimentsunder prototypic temperature and pressure conditions
+        if self.voidFractionCorrel == 'Ozaki':
+            if self.rhogTEMP[i] == 0:
+                return 0
+            if self.rholTEMP[i] == 0:
+                return 0
+            P = self.P[i]
+            G = self.rhoTEMP[i]*abs(self.U[i])
+            x = self.xThTEMP[i]
+            rho_g = self.rhogTEMP[i]
+            rho_l = self.rholTEMP[i]
+            mul = FAST_IAPWS.get_mul(P*(10**(-6)))
+            sigma = FAST_IAPWS.get_sigma(P*(10**(-6)))
+            eps = self.voidFractionTEMP[i]
+            La = (sigma/((rho_l-rho_g)*self.g))**0.5
+            N_mul = mul/(rho_l*sigma*La)**(0.5)
+            N_rho = rho_g/rho_l
+            Dh_ratio = self.pitch/La
+            plus = ((rho_l-rho_g)*self.g*sigma/rho_l**2)**0.25
+            jg_plus = (G*x)/(rho_g*plus)
+            Vgj_plus_B = np.sqrt(2) * (1 - eps)**1.75
+            if N_mul <= 2.25*10**(-3):
+                if Dh_ratio <= 30:
+                    Vgj_plus_P = 0.019 * Dh_ratio**(0.809) * N_rho**(-0.157) * N_mul**(-0.562)
+                else:
+                    Vgj_plus_P = 0.030 * N_rho**(-0.157) * N_mul**(-0.562)
+            else:
+                if Dh_ratio >= 30:
+                    Vgj_plus_P = 0.92 * N_rho**(-0.157)
+                else:
+                    Vgj_plus_P = 0
+            Vgj_plus = Vgj_plus_B * np.exp(-1.39 * jg_plus) + Vgj_plus_P * (1 - np.exp(-1.39 * jg_plus))
+            Vgj_final = Vgj_plus * plus
             return Vgj_final
             
     #Get the distribution parameter for a given cell based on the selected correlation model
@@ -641,6 +751,39 @@ class statesVariables():
             C0_trans = if_lisse(T, Tsat - DTSUB, 0.5, C0_sub, C0_liq)
             C0_final = if_lisse(H, hl, 5.0, C0_sat, C0_trans)
             return C0_final
+
+        #Issu du papier de Ozaki et al: Development of drift-flux model based on 8 × 8 BWR rod bundle geometry experimentsunder prototypic temperature and pressure conditions
+        if self.voidFractionCorrel == 'Ozaki':
+            rho_g = self.rhogTEMP[i]
+            rho_l = self.rholTEMP[i]
+            if rho_g == 0:
+                return 0
+            if rho_l == 0:
+                return 0
+            ratio = self.clad_radius * 2.0 / self.pin_pitch
+            A = 1.015 + 0.05 * ratio
+            B = 0.015 + 0.05 * ratio
+            ratio_table = np.array([0.3, 0.5, 0.7]) # pas idéal, il faut trouver le papier de Julia et al. pour une expression explicite de C et D : Julia JE, Hibiki T, Ishii M, Yun BJ, Park GC. Drift-fluxmodel in a sub-channel of rod bundle geometry
+            C_table = np.array([26.3, 21.2, 34.1])
+            D_table = np.array([0.780, 0.762, 0.925])
+            idx = np.argmin(np.abs(ratio_table - ratio))
+            C = C_table[idx]
+            D = D_table[idx]
+            eps = max(0.0,self.voidFractionTEMP[i])
+            eps_H = 0.2
+            eps_L = 0.1
+            C0_H = 1.1 - 0.1 * np.sqrt(rho_g / rho_l)
+            if eps < 1e-6:
+                C0_L = 0.0
+            else:
+                C0_L = (A - B * np.sqrt(rho_g / rho_l)) * (1 - np.exp(-C * eps**D))
+            if eps >= eps_H:
+                return C0_H
+            if eps <= eps_L:
+                return C0_L
+            else:
+                f = (eps_H - eps) / (eps_H - eps_L)
+                return C0_L*f + C0_H*(1-f)
             
     #Get the drift velocity for a given cell based on the selected void fraction correlation
     def getVgj_prime(self, i):

@@ -24,7 +24,7 @@ from pyTHM.WaterProperties.waterProperties import FAST_IAPWS
 import cProfile
 
 class DFMclass():
-    def __init__(self, canal_type, nCells, tInlet, qFlow, pOutlet, height, fuelRadius, cladRadius, pitch,  numericalMethod, frfaccorel, P2P2corel, voidFractionCorrel, dt = 0, t_tot = 0, D_h = 0, volumetricArea = 0, porosities=None, acools=None, dhs=None, phs=None, kexp=None, kcon=None, rsin=None):
+    def __init__(self, canal_type, nCells, tInlet, qFlow, pOutlet, height, fuelRadius, cladRadius, pin_pitch, pitch,  numericalMethod, frfaccorel, P2P2corel, voidFractionCorrel, dt = 0, t_tot = 0, D_h = 0, volumetricArea = 0, porosities=None, acools=None, dhs=None, phs=None, kexp=None, kcon=None, rsin=None):
         
         """
         Attributes:
@@ -87,6 +87,7 @@ class DFMclass():
         self.cladRadius = cladRadius #External radius of the clad m
         self.pitch = pitch
         self.wall_dist = pitch
+        self.pin_pitch = pin_pitch
         self.canalType = canal_type
 
         #Porous media parameters
@@ -231,7 +232,7 @@ class DFMclass():
             self.H = [np.ones(self.nFaces)*self.hInlet] #
             self.voidFraction = [np.array([i*self.epsilonTarget/self.nFaces for i in range(self.nFaces)])]
 
-            updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius,  self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
+            updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius,  self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
             updateVariables.createFields()
                 
             self.xTh = [np.ones(self.nFaces)]
@@ -255,7 +256,7 @@ class DFMclass():
                 self.H = [self.enthalpyList[self.timeCount]]
                 self.voidFraction = [self.voidFractionList[self.timeCount]]
 
-                updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
+                updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
                 updateVariables.createFields()
 
                 self.xTh = [np.ones(self.nFaces)]
@@ -605,7 +606,7 @@ class DFMclass():
         self.S_mom = np.zeros(self.nFaces)
         
         # 1. Instanciation de l'objet pour les corrélations diphasiques
-        water = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
+        water = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
         # Connexion en temps réel pour que les corrélations utilisent les bonnes valeurs
         water.xThTEMP = self.xTh[-1]
         water.voidFractionTEMP = self.voidFraction[-1]
@@ -694,7 +695,7 @@ class DFMclass():
                 Htemp = resolveSystem.x
 
                 self.H.append(Htemp)
-                updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
+                updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
                 updateVariables.updateFields()
 
                 self.xTh.append(updateVariables.xThTEMP)
@@ -764,7 +765,7 @@ class DFMclass():
                     Htemp = resolveSystem.x
 
                     self.H.append(Htemp)
-                    updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
+                    updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
                     updateVariables.updateFields()
 
                     self.xTh.append(updateVariables.xThTEMP)
@@ -877,7 +878,7 @@ class DFMclass():
         self.h_z = self.H[-1]
         self.T_surf = np.zeros(self.nCells)
         self.Hc = np.zeros(self.nCells)
-        updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
+        updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
         updateVariables.createFields()
         for i in range(self.nCells):
             hl, hg = updateVariables.getPhasesEnthalpy(i)
@@ -977,7 +978,7 @@ class DFMclass():
     
     #Function to get the phases velocity
     def getPhasesVelocity(self):
-        water = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
+        water = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
         Ul = [water.getUl(i) for i in range(self.nCells)]
         Ug = [water.getUg(i) for i in range(self.nCells)]
         return Ul, Ug

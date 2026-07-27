@@ -121,6 +121,7 @@ def test_GE14_cases():
     fuel_radius = pin_geom['fuel_radius'] * 1E-2
     gap_radius = pin_geom['gap_radius'] * 1E-2
     clad_radius = pin_geom['clad_radius'] * 1E-2
+    pin_pitch = pin_geom['pin_pitch'] * 1E-2
     pitch_m = pitch_cm * 1E-2
     fuel_rod_length = (maxh - z_min) * 1E-2
     # ------------------------------------------------------
@@ -157,6 +158,7 @@ def test_GE14_cases():
                     fuel_radius=fuel_radius,
                     gap_radius=gap_radius,
                     clad_radius=clad_radius,
+                    pin_pitch = pin_pitch,
                     fuel_rod_length=fuel_rod_length,
                     tInlet=543.15,
                     pOutlet=7.20E+06,
@@ -176,7 +178,7 @@ def test_GE14_cases():
                     t_tot=0,
                     frfaccorel=frfaccorel_choice,
                     P2Pcorel='friedel', 
-                    voidFractionCorrel='EPRIvoidModel', 
+                    voidFractionCorrel='Ozaki', 
                     numericalMethod="FVM",
                     porosities=porosities_profile,
                     acools=acool_profile,

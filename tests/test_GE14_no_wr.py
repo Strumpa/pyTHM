@@ -91,40 +91,6 @@ def test_GE14_cases():
     kcon_profile = geom_profiles[6]
     rsin_profile = geom_profiles[7]
 
-    # Vérification des données entrantes
-    print(f"Min/Max acools: {np.min(acool_profile)}, {np.max(acool_profile)}")
-    print(f"NaN dans acools: {np.isnan(acool_profile).any()}")
-    print(f"Zéro dans acools: {np.any(acool_profile == 0)}")
-    print(f"Taille de acools: {len(acool_profile)}")
-
-    # Plot rapide pour vérifier la continuité
-    import matplotlib.pyplot as plt
-    plt.plot(acool_profile)
-    plt.title("Profil axial de section (acools)")
-    plt.show()
-
-    geom_profiles_wr = analyser.execute_profile_z(
-        ('wr_tube',),
-        dz, dz, z_min, maxh
-    )
-
-    acools_wr = [a / 10000.0 for a in geom_profiles_wr[2]] # Conversion cm² -> m²
-    porosities_wr = geom_profiles_wr[1]
-    dhs_wr = [dh * 1e-2 for dh in geom_profiles_wr[3]]    # Conversion cm -> m
-    kexp_wr = geom_profiles_wr[5]
-    
-    p_wr = []
-    rwall_wr   = []
-    curr_z = z_min
-    while curr_z + dz <= maxh + 1e-10:
-        z1, z2 = curr_z, curr_z + dz
-        p_wr.append(analyser.get_pch_wr_outer(z1, z2) * 1e-2)
-        rwall_wr.append(analyser.get_rwall_wr_tube(z1, z2))
-        curr_z += dz
-    wr_holes, Idelchik_exit, Idelchik_enter = analyser.get_wr_hole_data()
-    hole_z = [h['z'] * 1e-2 for h in wr_holes]
-    hole_A = [math.pi * (h['D_hole'] * 0.5e-2) ** 2 for h in wr_holes]
-    
     # --- MODIFICATION ICI : Récupération depuis l'objet ---
     # Paramètres géométriques de base extraits de l'objet DRAGON
     pin_geom = analyser.slices_data[0]['dragon_assembly_model'].pin_geometry_dict
@@ -168,7 +134,7 @@ def test_GE14_cases():
                     fuel_radius=fuel_radius,
                     gap_radius=gap_radius,
                     clad_radius=clad_radius,
-                    pin_pitch=pin_pitch,
+                    pin_pitch = pin_pitch,
                     fuel_rod_length=fuel_rod_length,
                     tInlet=543.15,
                     pOutlet=7.20E+06,
@@ -188,7 +154,7 @@ def test_GE14_cases():
                     t_tot=0,
                     frfaccorel=frfaccorel_choice,
                     P2Pcorel='friedel', 
-                    voidFractionCorrel='GEramp',  
+                    voidFractionCorrel='Ozaki', 
                     numericalMethod="FVM",
                     porosities=porosities_profile,
                     acools=acool_profile,
@@ -197,17 +163,7 @@ def test_GE14_cases():
                     kexp_profile=kexp_profile,
                     kcon_profile=kcon_profile,
                     rsin_profile=rsin_profile,
-                    water_rod=True,
-                    acools_wr=acools_wr,
-                    porosities_wr=porosities_wr,
-                    dhs_wr=dhs_wr,
-                    kexp_wr=kexp_wr,
-                    p_wr=p_wr,
-                    rwall_wr=rwall_wr,
-                    hole_z=[],
-                    hole_A=[],
-                    Idelchik_enter=Idelchik_enter,
-                    Idelchik_exit=Idelchik_exit
+                    water_rod=False,
                 )
                 
                 # Récupération et affichage d'un résumé des résultats
