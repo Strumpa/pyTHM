@@ -12,7 +12,23 @@ from pyTHM.Lissage.smooth import if_lisse, max_lisse, min_lisse
 
 class FastIAPWS:
     """
-    Générateur de Look-Up Tables 1D (Saturation) et 2D (Sous-refroidi).
+    Generates local IIAPWS97 tables for fast access to thermodynamic properties of water and steam.
+
+    Methods:
+    - get_Tsat(P): Returns the saturation temperature for a given pressure P (in MPa).
+    - get_hl(P): Returns the saturated liquid enthalpy for a given pressure P (in MPa).
+    - get_hg(P): Returns the saturated vapor enthalpy for a given pressure P (in MPa).
+    - get_rhol(P): Returns the saturated liquid density for a given pressure P (in MPa).
+    - get_rhog(P): Returns the saturated vapor density for a given pressure P (in MPa).
+    - get_mul(P): Returns the saturated liquid dynamic viscosity for a given pressure P (in MPa).
+    - get_mug(P): Returns the saturated vapor dynamic viscosity for a given pressure P (in MPa).
+    - get_sigma(P): Returns the surface tension for a given pressure P (in MPa).
+    - get_cpl(P): Returns the saturated liquid specific heat capacity for a given pressure P (in MPa).
+    - get_cpg(P): Returns the saturated vapor specific heat capacity for a given pressure P (in MPa).
+    - get_kl(P): Returns the saturated liquid thermal conductivity for a given pressure P (in MPa).
+    - get_kg(P): Returns the saturated vapor thermal conductivity for a given pressure P (in MPa).
+    - get_sub_rhol(P, H): Returns the subcooled liquid density for a given pressure P (in MPa) and enthalpy H (in kJ/kg).
+    - get_sub_T(P, H): Returns the subcooled liquid temperature for a given pressure P (in MPa) and enthalpy H (in kJ/kg).
     """
     def __init__(self):
         print("--- Initialisation des tables thermodynamiques (IAPWS97) ---")
@@ -109,10 +125,6 @@ class statesVariables():
     Methods:
     - createFields(): Initializes temporary arrays for cell-specific properties such as densities, void fractions, friction factors, and geometric areas. Uses specific methods to populate these arrays.
     - updateFields(): Updates key properties (e.g., void fraction, densities) based on the selected void fraction correlation model. Calls corresponding methods for each model.
-    - modBestion(): Updates void fraction and related properties using the "modBestion" correlation with iterative convergence.
-    - HEM1(): Updates void fraction and related properties using the "HEM1" correlation with iterative convergence.
-    - GEramp(): Updates void fraction and related properties using the "GEramp" correlation with iterative convergence.
-    - EPRIvoidModel(): Updates void fraction and related properties using the "EPRIvoidModel" correlation with iterative convergence.
     - getDensity(i): Retrieves the liquid and vapor densities for a given cell using IAPWS97 thermodynamic models.
     - getQuality(i): Calculates the quality (phase fraction) based on enthalpy values.
     - getVoidFraction(i): Computes void fraction using different correlations, depending on the selected model.
@@ -120,9 +132,13 @@ class statesVariables():
     - getC0(i): Computes the slip ratio for a given cell based on the selected correlation model.
     - getFrictionFactor(i): Calculates the friction factor based on Reynolds number and the selected friction factor correlation.
     - getPhi2Phi(i): Computes the two-phase pressure multiplier for a given cell.
+    - getPhi2Expansion(i): Calculates the two-phase pressure multiplier for sudden expansion in a given cell.
+    - getPhi2Contraction(i): Calculates the two-phase pressure multiplier for sudden contraction in a given cell.
     - getAreas(i): Calculates the positive and negative flow areas for a given cell.
     - getPhasesEnthalpy(i): Retrieves the enthalpy values for the liquid and vapor phases at a given pressure.
     - getReynoldsNumber(i): Computes the Reynolds number for flow in a given cell.
+    - getDTSUB(i): Calculates the subcooling temperature difference for a given cell based on pressure and enthalpy.
+
     """
 
     def __init__(self, U, P, H, voidFraction, clad_radius, pin_pitch, pitch, D_h, areaMatrix, poro, DV, voidFractionCorrel, frfaccorel, P2Pcorel, Dz, q__, phs, qFlow, rf, rw, kexp, kcon, rsin):
@@ -173,262 +189,85 @@ class statesVariables():
 
     #Update the values of the variables using the selected void fraction correlation model
     def updateFields(self):
-
+        """
+        Updates the thermohydraulic variables (void fraction, densities, velocities, friction) 
+        using the selected void fraction correlation model.
+        Resolves the non-linearity of the Drift Flux Model via a local convergence loop.
+        """
+        # 1. Unified array initialization (DRY)
+        self.rholTEMP = np.ones(self.nCells)
+        self.rhogTEMP = np.ones(self.nCells)
+        self.rhoTEMP = np.ones(self.nCells)
+        self.DhfgTEMP = np.ones(self.nCells)
+        self.fTEMP = np.ones(self.nCells)
+        self.areaMatrix_1TEMP = np.ones(self.nCells)
+        self.areaMatrix_2TEMP = np.ones(self.nCells)
+        self.VgjTEMP = np.ones(self.nCells)
+        self.C0TEMP = np.ones(self.nCells)
+        self.VgjPrimeTEMP = np.ones(self.nCells)
+        
+        # Copy the old void fraction to start the iteration
+        self.voidFractionOld = np.copy(self.voidFraction)
+        self.voidFractionTEMP = np.copy(self.voidFraction)
+        
+        self.Ul = np.ones(self.nCells)
+        self.Ug = np.ones(self.nCells)
+        self.Rel = np.ones(self.nCells)
         self.xThTEMP = np.ones(self.nCells)
+
+        # Under-relaxation parameter (critical for Ozaki, 1.0 = no relaxation)
+        omega = 0.5 if self.voidFractionCorrel == 'Ozaki' else 1.0
+
+        # 2. Main loop over the spatial mesh
         for i in range(self.nCells):
+            # Basic thermodynamic parameters
             self.xThTEMP[i] = self.getQuality(i)
-        
-        if self.voidFractionCorrel == 'modBestion':
-            self.modBestion()
-
-        elif self.voidFractionCorrel == 'HEM1':
-            self.HEM1()
-
-        elif self.voidFractionCorrel == 'GEramp':
-            self.GEramp()
-
-        elif self.voidFractionCorrel == 'EPRIvoidModel':
-            self.EPRIvoidModel()
-        
-        elif self.voidFractionCorrel == 'Hibiki_Al-Saif':
-            self.Hibiki_Al_Saif()
-
-        elif self.voidFractionCorrel == 'Ozaki':
-            self.Ozaki()
-        else:
-            raise ValueError('Invalid void fraction correlation model')
-
-    #Update the values of the variables using the selected void fraction correlation model: modBestion
-    def modBestion(self):
-        self.rholTEMP, self.rhogTEMP, self.rhoTEMP, self.voidFractionTEMP, self.DhfgTEMP, self.fTEMP, self.areaMatrix_1TEMP, self.areaMatrix_2TEMP, self.areaMatrix_2TEMP, self.VgjTEMP, self.C0TEMP, self.VgjPrimeTEMP = np.ones(self.nCells), np.ones(self.nCells), np.ones(self.nCells), np.ones(self.nCells), np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells)
-        self.voidFractionOld = self.voidFraction
-        self.Ul = np.ones(self.nCells)
-        self.Ug = np.ones(self.nCells)
-        self.Rel = np.ones(self.nCells)
-        for i in range(self.nCells):
             self.rholTEMP[i], self.rhogTEMP[i], self.rhoTEMP[i] = self.getDensity(i)
+            self.DhfgTEMP[i] = self.getHfg(i)
             self.C0TEMP[i] = self.getC0(i)
             self.VgjTEMP[i] = self.getVgj(i)
             self.VgjPrimeTEMP[i] = self.getVgj_prime(i)
-            self.DhfgTEMP[i] = self.getHfg(i)
-            voidFractionNew = self.getVoidFraction(i)
-            self.voidFractionTEMP[i] = voidFractionNew
-            self.rhoTEMP[i] = self.getDensity(i)[2]
-            self.voidFractionTEMP[i] = voidFractionNew
-            self.rhoTEMP[i] = self.getDensity(i)[2]
-            self.fTEMP[i] = self.getFrictionFactor(i)
-            self.areaMatrix_1TEMP[i], self.areaMatrix_2TEMP[i] = self.getAreas(i)
-            self.Ul[i] = self.getUl(i)
-            self.Ug[i] = self.getUg(i)
-            self.Rel[i] = self.getReynoldsNumberLiquid(i)
-    
-    #Update the values of the variables using the selected void fraction correlation model: HEM1
-    def HEM1(self):
-        self.rholTEMP, self.rhogTEMP, self.rhoTEMP, self.voidFractionTEMP, self.DhfgTEMP, self.fTEMP, self.areaMatrix_1TEMP, self.areaMatrix_2TEMP, self.areaMatrix_2TEMP, self.VgjTEMP, self.C0TEMP, self.VgjPrimeTEMP = np.ones(self.nCells), np.ones(self.nCells), np.ones(self.nCells), np.ones(self.nCells), np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells)
-        self.voidFractionOld = self.voidFraction
-        self.Ul = np.ones(self.nCells)
-        self.Ug = np.ones(self.nCells)
-        self.Rel = np.ones(self.nCells)
-        for i in range(self.nCells):
-            self.rholTEMP[i], self.rhogTEMP[i], self.rhoTEMP[i] = self.getDensity(i)
-            self.C0TEMP[i] = self.getC0(i)
-            self.VgjTEMP[i] = self.getVgj(i)
-            self.VgjPrimeTEMP[i] = self.getVgj_prime(i)
-            self.DhfgTEMP[i] = self.getHfg(i)
-            voidFractionNew = self.getVoidFraction(i)
-            self.voidFractionTEMP[i] = voidFractionNew
-            self.rhoTEMP[i] = self.getDensity(i)[2]
-            self.voidFractionTEMP[i] = voidFractionNew
-            self.rhoTEMP[i] = self.getDensity(i)[2]
-            self.fTEMP[i] = self.getFrictionFactor(i)
-            self.areaMatrix_1TEMP[i], self.areaMatrix_2TEMP[i] = self.getAreas(i)
-            self.Ul[i] = self.getUl(i)
-            self.Ug[i] = self.getUg(i)
-            self.Rel[i] = self.getReynoldsNumberLiquid(i)
 
-    #Update the values of the variables using the selected void fraction correlation model: GEramp
-    def GEramp(self):
-        self.rholTEMP, self.rhogTEMP, self.rhoTEMP, self.voidFractionTEMP, self.DhfgTEMP, self.fTEMP, self.areaMatrix_1TEMP, self.areaMatrix_2TEMP, self.areaMatrix_2TEMP, self.VgjTEMP, self.C0TEMP, self.VgjPrimeTEMP = np.ones(self.nCells), np.ones(self.nCells), np.ones(self.nCells), np.ones(self.nCells), np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells)
-        self.voidFractionOld = self.voidFraction
-        self.Ul = np.ones(self.nCells)
-        self.Ug = np.ones(self.nCells)
-        self.Rel = np.ones(self.nCells)
-        for i in range(self.nCells):
-            self.rholTEMP[i], self.rhogTEMP[i], self.rhoTEMP[i] = self.getDensity(i)
-            self.C0TEMP[i] = self.getC0(i)
-            self.VgjTEMP[i] = self.getVgj(i)
-            self.VgjPrimeTEMP[i] = self.getVgj_prime(i)
-            self.DhfgTEMP[i] = self.getHfg(i)
+            # 3. Local iterative convergence loop for void fraction
             for j in range(1000):
                 voidFractionNew = self.getVoidFraction(i)
-                if np.linalg.norm(voidFractionNew - self.voidFractionTEMP[i]) < 1e-3:
+                
+                # Convergence test
+                if abs(voidFractionNew - self.voidFractionTEMP[i]) < 1e-3:
                     self.voidFractionTEMP[i] = voidFractionNew
                     self.rhoTEMP[i] = self.getDensity(i)[2]
                     self.C0TEMP[i] = self.getC0(i)
                     self.VgjTEMP[i] = self.getVgj(i)
                     self.VgjPrimeTEMP[i] = self.getVgj_prime(i)
                     break
-                elif j == 999:
-                    raise ValueError('Convergence in update fields not reached')
-                    break
-                else:
-                    self.voidFractionTEMP[i] = voidFractionNew
-                    if self.voidFractionTEMP[i] < 0.0:
-                        self.voidFractionTEMP[i] = 0.0
-                    elif self.voidFractionTEMP[i] > 0.999:
-                        self.voidFractionTEMP[i] = 0.999
-                        
-                    if self.xThTEMP[i] < 0.0:
-                        self.xThTEMP[i] = 0.0
-                    elif self.xThTEMP[i] > 1.0:
-                        self.xThTEMP[i] = 1.0
-                    self.rhoTEMP[i] = self.getDensity(i)[2]
-                    self.C0TEMP[i] = self.getC0(i)
-                    self.VgjTEMP[i] = self.getVgj(i)
-                    self.VgjPrimeTEMP[i] = self.getVgj_prime(i)
-
-            self.fTEMP[i] = self.getFrictionFactor(i)
-            self.areaMatrix_1TEMP[i], self.areaMatrix_2TEMP[i] = self.getAreas(i)
-            self.Ul[i] = self.getUl(i)
-            self.Ug[i] = self.getUg(i)
-            self.Rel[i] = self.getReynoldsNumberLiquid(i)
-
-    #Update the values of the variables using the selected void fraction correlation model: EPRIvoidModel
-    def EPRIvoidModel(self):
-        self.rholTEMP, self.rhogTEMP, self.rhoTEMP, self.voidFractionTEMP, self.DhfgTEMP, self.fTEMP, self.areaMatrix_1TEMP, self.areaMatrix_2TEMP, self.areaMatrix_2TEMP, self.VgjTEMP, self.C0TEMP, self.VgjPrimeTEMP = np.ones(self.nCells), np.ones(self.nCells), np.ones(self.nCells), np.ones(self.nCells), np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells)
-        self.voidFractionOld = self.voidFraction
-        self.Ul = np.ones(self.nCells)
-        self.Ug = np.ones(self.nCells)
-        self.Rel = np.ones(self.nCells)
-        for i in range(self.nCells):
-            self.rholTEMP[i], self.rhogTEMP[i], self.rhoTEMP[i] = self.getDensity(i)
-            self.C0TEMP[i] = self.getC0(i)
-            self.VgjTEMP[i] = self.getVgj(i)
-            self.VgjPrimeTEMP[i] = self.getVgj_prime(i)
-            self.DhfgTEMP[i] = self.getHfg(i)
-            for j in range(1000):
-                voidFractionNew = self.getVoidFraction(i)
-                if np.linalg.norm(voidFractionNew - self.voidFractionTEMP[i]) < 1e-3:
-                    self.voidFractionTEMP[i] = voidFractionNew
-                    self.rhoTEMP[i] = self.getDensity(i)[2]
-                    self.C0TEMP[i] = self.getC0(i)
-                    self.VgjTEMP[i] = self.getVgj(i)
-                    self.VgjPrimeTEMP[i] = self.getVgj_prime(i)
-                    break
-                elif j == 999:
-                    raise ValueError('Convergence in update fields not reached')
-                    break
-                else:
-                    self.voidFractionTEMP[i] = voidFractionNew
-                    if self.voidFractionTEMP[i] < 0.0:
-                        self.voidFractionTEMP[i] = 0.0
-                    elif self.voidFractionTEMP[i] > 0.999:
-                        self.voidFractionTEMP[i] = 0.999
-                        
-                    if self.xThTEMP[i] < 0.0:
-                        self.xThTEMP[i] = 0.0
-                    elif self.xThTEMP[i] > 1.0:
-                        self.xThTEMP[i] = 1.0
-                    self.rhoTEMP[i] = self.getDensity(i)[2]
-                    self.C0TEMP[i] = self.getC0(i)
-                    self.VgjTEMP[i] = self.getVgj(i)
-                    self.VgjPrimeTEMP[i] = self.getVgj_prime(i)
-
-            self.fTEMP[i] = self.getFrictionFactor(i)
-            self.areaMatrix_1TEMP[i], self.areaMatrix_2TEMP[i] = self.getAreas(i)
-            self.Ul[i] = self.getUl(i)
-            self.Ug[i] = self.getUg(i)
-            self.Rel[i] = self.getReynoldsNumberLiquidD5(i)
-
-    def Hibiki_Al_Saif(self):
-        # 1. Initialisation des tableaux
-        self.rholTEMP, self.rhogTEMP, self.rhoTEMP, self.voidFractionTEMP, self.DhfgTEMP, self.fTEMP, self.areaMatrix_1TEMP, self.areaMatrix_2TEMP, self.areaMatrix_2TEMP, self.VgjTEMP, self.C0TEMP, self.VgjPrimeTEMP = np.ones(self.nCells), np.ones(self.nCells), np.ones(self.nCells), np.ones(self.nCells), np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells)
-        self.voidFractionOld = self.voidFraction
-        self.Ul = np.ones(self.nCells)
-        self.Ug = np.ones(self.nCells)
-        self.Rel = np.ones(self.nCells)
-        
-        for i in range(self.nCells):
-            # 2. Extraction des densités pures (briques de base)
-            self.rholTEMP[i], self.rhogTEMP[i], self.rhoTEMP[i] = self.getDensity(i)
-            self.DhfgTEMP[i] = self.getHfg(i)
-            
-            # 3. Calcul de C0 et Vgj (Ils ne dépendent plus que de G, x et rho !)
-            self.C0TEMP[i] = self.getC0(i)
-            self.VgjTEMP[i] = self.getVgj(i)
-            
-            # 4. Déduction de la fraction de vide (via l'équation DFM standard)
-            voidFractionNew = self.getVoidFraction(i)
-            
-            # Sécurité numérique sur le taux de vide
-            if voidFractionNew < 0.0:
-                voidFractionNew = 0.0
-            elif voidFractionNew > 0.999:
-                voidFractionNew = 0.999
-            self.voidFractionTEMP[i] = voidFractionNew
-            
-            # 5. Calcul de la densité du mélange maintenant qu'on a le taux de vide
-            self.rhoTEMP[i] = self.getDensity(i)[2]
-            
-            # 6. Déduction des produits dérivés (Vitesses des phases)
-            self.VgjPrimeTEMP[i] = self.getVgj_prime(i)
-            self.Ul[i] = self.getUl(i)
-            self.Ug[i] = self.getUg(i)
-            
-            # 7. Clôture des paramètres hydrauliques
-            self.fTEMP[i] = self.getFrictionFactor(i)
-            self.areaMatrix_1TEMP[i], self.areaMatrix_2TEMP[i] = self.getAreas(i)
-            self.Rel[i] = self.getReynoldsNumberLiquidD5(i)
-
-    #Update the values of the variables using the selected void fraction correlation model: Ozaki
-    def Ozaki(self):
-        self.rholTEMP, self.rhogTEMP, self.rhoTEMP, self.voidFractionTEMP, self.DhfgTEMP, self.fTEMP, self.areaMatrix_1TEMP, self.areaMatrix_2TEMP, self.areaMatrix_2TEMP, self.VgjTEMP, self.C0TEMP, self.VgjPrimeTEMP = np.ones(self.nCells), np.ones(self.nCells), np.ones(self.nCells), np.ones(self.nCells), np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells),np.ones(self.nCells)
-        self.voidFractionOld = self.voidFraction
-        self.Ul = np.ones(self.nCells)
-        self.Ug = np.ones(self.nCells)
-        self.Rel = np.ones(self.nCells)
-        for i in range(self.nCells):
-            self.rholTEMP[i], self.rhogTEMP[i], self.rhoTEMP[i] = self.getDensity(i)
-            self.C0TEMP[i] = self.getC0(i)
-            self.VgjTEMP[i] = self.getVgj(i)
-            self.VgjPrimeTEMP[i] = self.getVgj_prime(i)
-            self.DhfgTEMP[i] = self.getHfg(i)
-            omega = 0.5 # Relaxation
-            for j in range(1000):
-                voidFractionNew = self.getVoidFraction(i)
-                if np.linalg.norm(voidFractionNew - self.voidFractionTEMP[i]) < 1e-3:
-                    self.voidFractionTEMP[i] = voidFractionNew
-                    self.rhoTEMP[i] = self.getDensity(i)[2]
-                    self.C0TEMP[i] = self.getC0(i)
-                    self.VgjTEMP[i] = self.getVgj(i)
-                    self.VgjPrimeTEMP[i] = self.getVgj_prime(i)
-                    break
-                elif j == 999:
-                    raise ValueError('Convergence in update fields not reached for Ozaki')
-                else:
-                    self.voidFractionTEMP[i] = omega * voidFractionNew + (1.0 - omega) * self.voidFractionTEMP[i]
                     
-                    # Bornes physiques strictes
-                    if self.voidFractionTEMP[i] < 0.0:
-                        self.voidFractionTEMP[i] = 0.0
-                    elif self.voidFractionTEMP[i] > 0.999:
-                        self.voidFractionTEMP[i] = 0.999
+                if j == 999:
+                    raise ValueError(f"Local convergence not reached for model {self.voidFractionCorrel} at cell {i}.")
+                
+                # Update with under-relaxation
+                self.voidFractionTEMP[i] = omega * voidFractionNew + (1.0 - omega) * self.voidFractionTEMP[i]
+                
+                # Strict physical bounds via clipping
+                self.voidFractionTEMP[i] = max(0.0, min(self.voidFractionTEMP[i], 0.999))
+                self.xThTEMP[i] = max(0.0, min(self.xThTEMP[i], 1.0))
+                
+                # Refresh dependent parameters for the next iteration
+                self.rhoTEMP[i] = self.getDensity(i)[2]
+                self.C0TEMP[i] = self.getC0(i)
+                self.VgjTEMP[i] = self.getVgj(i)
+                self.VgjPrimeTEMP[i] = self.getVgj_prime(i)
 
-                    if self.xThTEMP[i] < 0.0:
-                        self.xThTEMP[i] = 0.0
-                    elif self.xThTEMP[i] > 1.0:
-                        self.xThTEMP[i] = 1.0
-                        
-                    self.rhoTEMP[i] = self.getDensity(i)[2]
-                    self.C0TEMP[i] = self.getC0(i)
-                    self.VgjTEMP[i] = self.getVgj(i)
-                    self.VgjPrimeTEMP[i] = self.getVgj_prime(i)
-
+            # 4. Hydraulic post-processing
             self.fTEMP[i] = self.getFrictionFactor(i)
             self.areaMatrix_1TEMP[i], self.areaMatrix_2TEMP[i] = self.getAreas(i)
             self.Ul[i] = self.getUl(i)
             self.Ug[i] = self.getUg(i)
-            self.Rel[i] = self.getReynoldsNumberLiquid(i)
+            
+            # Differentiate liquid Reynolds number calculation based on historical models
+            if self.voidFractionCorrel in ['EPRIvoidModel', 'Hibiki_Al-Saif']:
+                self.Rel[i] = self.getReynoldsNumberLiquidD5(i)
+            else:
+                self.Rel[i] = self.getReynoldsNumberLiquid(i)
 
     #Get the density of the liquid and vapor phases for a given cell
     def getDensity(self, i):
@@ -922,33 +761,19 @@ class statesVariables():
     def getAreas(self, i):
         if self.voidFractionTEMP[i] > -0.001:
             # --- FACE POSITIVE (i-1) ---
-            rho_m_pos = self.rhoTEMP[i-1]
-            rho_l_pos = self.rholTEMP[i-1]
             A_pos = self.areaMatrix[i-1]
             
             # Friction linéaire classique
             loss_fric_pos = (self.getPhi2Phi(i-1)/4) * (self.fTEMP[i-1] / self.D_h[i-1]) * self.DV[i-1]
-            
-            # Application de la formule : loss = 0.5 * phi2 * K * (rho_m / rho_l) * Area
-            #loss_exp_pos = 0.5 * self.getPhi2Expansion(i-1) * self.kexp[i-1] * (rho_m_pos / rho_l_pos) * A_pos
-            #loss_con_pos = 0.5 * self.getPhi2Contraction(i-1) * self.kcon[i-1] * (rho_m_pos / rho_l_pos) * A_pos
-            
-            A_chap_pos = A_pos + loss_fric_pos #+ loss_exp_pos + loss_con_pos
+            A_chap_pos = A_pos + loss_fric_pos 
 
             # --- FACE NÉGATIVE (i) ---
-            rho_m_neg = self.rhoTEMP[i]
-            rho_l_neg = self.rholTEMP[i]
             A_neg = self.areaMatrix[i]
             
             # Friction linéaire classique
             loss_fric_neg = (self.getPhi2Phi(i)/4) * (self.fTEMP[i] / self.D_h[i]) * self.DV[i]
-            
-            # Application de la formule
-            #loss_exp_neg = 0.5 * self.getPhi2Expansion(i) * self.kexp[i] * (rho_m_neg / rho_l_neg) * A_neg
-            #loss_con_neg = 0.5 * self.getPhi2Contraction(i) * self.kcon[i] * (rho_m_neg / rho_l_neg) * A_neg
-            
-            A_chap_neg = A_neg - loss_fric_neg # - loss_exp_neg - loss_con_neg
-            
+            A_chap_neg = A_neg - loss_fric_neg  
+
         return A_chap_pos, A_chap_neg
 
     #Get the enthalpy values for the liquid and vapor phases at a given pressure

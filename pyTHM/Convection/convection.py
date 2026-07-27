@@ -356,8 +356,6 @@ class DFMclass():
 
             #Inside the pressure submatrix
             elif i >= self.nFaces and i < 2*self.nFaces-1:
-                idx = i - self.nFaces
-                #if abs(areaMatrix[i] - areaMatrix[i+1]) < 1e-6:
                 DI = -((epsilon_old[i+1] * rho_g_old[i+1] * rho_l_old[i+1] * V_gj_old[i+1]**2 * areaMatrix[i+1] )/ ((1 - epsilon_old[i+1])*rho_old[i+1]) )  + ((epsilon_old[i] * rho_g_old[i] * rho_l_old[i] * V_gj_old[i]**2 * areaMatrix[i] )/ ((1 - epsilon_old[i])*rho_old[i]) )     
                 VAR_VFM_Class.set_ADi(i, ci = 0,
                 ai = - areaMatrix[i],
@@ -366,26 +364,7 @@ class DFMclass():
             
                 VAR_VFM_Class.fillingOutsideBoundary(i, i-self.nFaces,
                 ai = - rho_old[i]*VAR_old[i-self.nFaces]*areaMatrix_old_2[i],
-                bi = rho_old[i+1]*VAR_old[i+1-self.nFaces]*areaMatrix_old_1[i+1])
-                # else:
-                #     u_amont = U_old[idx]
-                #     u_aval = U_old[idx+1]
-                #     rho_amont = rho_old[i]
-                #     rho_aval = rho_old[i+1]
-                #     rho_mix = (rho_amont + rho_aval)/2
-                #     dP_bernoulli = (rho_mix/2) * (u_amont**2 - u_aval**2)
-                #     K_tot = self.kexp_face[idx] + self.kcon_face[idx]
-                #     dP_perte = K_tot*0.5*rho_aval*(u_aval**2)
-                #     VAR_VFM_Class.set_ADi(i, ci = 0,
-                #         ai = - 1.0,
-                #         bi = 1.0,
-                #         di = dP_bernoulli - dP_perte)
-                #     VAR_VFM_Class.fillingOutsideBoundary(i, idx,
-                #         ai = 0.0, bi=0.0)
-
-
-
-        
+                bi = rho_old[i+1]*VAR_old[i+1-self.nFaces]*areaMatrix_old_1[i+1])        
         self.FVM = VAR_VFM_Class
 
     #Create the enthalpy matrix resolution equation system

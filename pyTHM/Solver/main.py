@@ -43,6 +43,7 @@ class pyTHM_solver:
         self.r_w = canal_radius # outer canal radius (m) if type is cylindrical, if type = square rw is the diameter of inscribed circle in the square canal, ie half the square's side.
         self.canal_type = canal_type # cylindrical or square, used to determine the cross sectional flow area in the canal and the hydraulic diameter
         self.Lf = fuel_rod_length # fuel rod length in m
+        self.pitch = canal_radius * 2.0 # distance between the centers of two adjacent fuel rods in meters
         
 
         self.tInlet = tInlet
@@ -128,7 +129,7 @@ class pyTHM_solver:
                 for ping_pong in range(40): 
                     
                     DFM_actif = DFMclass(canal_type, I_z, tInlet, qFlow_actif, pOutlet, fuel_rod_length, 
-                                        fuel_radius, clad_radius, pin_pitch, canal_radius * 2.0, numericalMethod, 
+                                        fuel_radius, clad_radius, pin_pitch, self.pitch, numericalMethod, 
                                         frfaccorel, P2Pcorel, voidFractionCorrel,
                                         dt=dt, t_tot=t_tot, porosities=porosities, acools=acools, 
                                         dhs=dhs, phs=phs, kexp=kexp_profile, kcon=kcon_profile, rsin=rsin_profile)
@@ -140,7 +141,7 @@ class pyTHM_solver:
                     rsin_wr_safe = np.ones(I_z+1) if kexp_wr is None else np.ones_like(kexp_wr)
                     
                     DFM_wr = DFMclass(canal_type, I_z, tInlet, qFlow_wr, pOutlet, fuel_rod_length, 
-                                    1e-5, 1e-5, pin_pitch, canal_radius * 2.0, numericalMethod, 
+                                    1e-5, 1e-5, pin_pitch, self.pitch, numericalMethod, 
                                     frfaccorel, P2Pcorel, voidFractionCorrel,
                                     dt=dt, t_tot=t_tot, porosities=porosities_wr, acools=acools_wr, 
                                     dhs=dhs_wr, phs=p_wr, kexp=kexp_wr, kcon=kcon_wr_safe, rsin=rsin_wr_safe)
@@ -242,7 +243,7 @@ class pyTHM_solver:
             S_mass_a, S_mom_a, S_h_a = np.zeros(I_z+1), np.zeros(I_z+1), np.zeros(I_z+1)
             
             DFM_actif = DFMclass(canal_type, I_z, tInlet, qFlow_actif, pOutlet, fuel_rod_length, 
-                                 fuel_radius, clad_radius, pin_pitch, canal_radius * 2.0, numericalMethod, 
+                                 fuel_radius, clad_radius, pin_pitch, self.pitch, numericalMethod, 
                                  frfaccorel, P2Pcorel, voidFractionCorrel,
                                  dt=dt, t_tot=t_tot, porosities=porosities, acools=acools, 
                                  dhs=dhs, phs=phs, kexp=kexp_profile, kcon=kcon_profile, rsin=rsin_profile)
