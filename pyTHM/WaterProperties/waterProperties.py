@@ -616,13 +616,18 @@ class statesVariables():
                 C0_L = 0.0
             else:
                 C0_L = (A - B * np.sqrt(rho_g / rho_l)) * (1 - np.exp(-C * eps**D))
-            if eps >= eps_H:
-                return C0_H
-            if eps <= eps_L:
-                return C0_L
-            else:
-                f = (eps_H - eps) / (eps_H - eps_L)
-                return C0_L*f + C0_H*(1-f)
+
+            #Original Ozaki model with linear interpolation between C0_L and C0_H. 
+            # Currently commented out due to better results with a constant C0_L value. 
+            # if eps >= eps_H:
+            #     return C0_H
+            # if eps <= eps_L:
+            #     return C0_L
+            # else:
+            #     f = (eps_H - eps) / (eps_H - eps_L)
+            #     return C0_L*f + C0_H*(1-f)
+            
+            return C0_L
             
     #Get the drift velocity for a given cell based on the selected void fraction correlation
     def getVgj_prime(self, i):
