@@ -434,7 +434,7 @@ class statesVariables():
             if self.rholTEMP[i] == 0:
                 return 0
             sigma = FAST_IAPWS.get_sigma(self.P[i]*(10**(-6)))
-            Vgj = (np.sqrt(2)*(self.g * sigma * (self.rholTEMP[i] - self.rhogTEMP[i]) / self.rholTEMP[i]**2)**0.25) * (1 + self.voidFractionTEMP[i])**(3/2)
+            Vgj = (np.sqrt(2)*(self.g * sigma * (self.rholTEMP[i] - self.rhogTEMP[i]) / self.rholTEMP[i]**2)**0.25) * (1 - self.voidFractionTEMP[i])**(3/2)
             return Vgj
         
         if self.voidFractionCorrel == 'HEM1':
