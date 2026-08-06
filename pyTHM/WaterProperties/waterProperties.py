@@ -32,7 +32,7 @@ class FastIAPWS:
     """
     def __init__(self):
         print("--- Initialisation des tables thermodynamiques (IAPWS97) ---")
-        # --- 1. TABLES DE SATURATION 1D (Pression uniquement) ---
+        # --- 1. 1D SATURATION TABLES (Pressure only) ---
         self.P_arr = np.linspace(6.5, 7.5, 200) # MPa
         
         self.Tsat, self.hl, self.hg = np.zeros(200), np.zeros(200), np.zeros(200)
@@ -58,10 +58,10 @@ class FastIAPWS:
             self.kl[i] = liq.k
             self.kg[i] = vap.k
             
-        # --- 2. TABLES SOUS-REFROIDIES 2D (Pression ET Enthalpie) ---
+        # --- 2. 2D SUBCOOLED TABLES (Pressure AND Enthalpy) ---
         print("--- Génération des surfaces 2D (P, H)... ---")
-        self.P_sub_arr = np.linspace(6.5, 7.5, 50)     # Grille de Pression
-        self.H_sub_arr = np.linspace(300.0, 1600.0, 200) # Grille d'Enthalpie
+        self.P_sub_arr = np.linspace(6.5, 7.5, 50)     # Pressure grid
+        self.H_sub_arr = np.linspace(300.0, 1600.0, 200) # Enthalpy grid
         
         rhol_sub_2d = np.zeros((50, 200))
         T_sub_2d = np.zeros((50, 200))
@@ -72,13 +72,13 @@ class FastIAPWS:
                 rhol_sub_2d[i, j] = state.rho
                 T_sub_2d[i, j] = state.T
                 
-        # Création des fonctions d'interpolation 2D ultra-rapides en C
+        # Creation of ultra-fast 2D interpolation functions in C
         self.rhol_sub_spline = RectBivariateSpline(self.P_sub_arr, self.H_sub_arr, rhol_sub_2d)
         self.T_sub_spline = RectBivariateSpline(self.P_sub_arr, self.H_sub_arr, T_sub_2d)
             
         print("--- Tables IAPWS générées avec succès ! ---")
 
-    # Méthodes d'accès 1D
+    # 1D access methods
     def get_Tsat(self, P): return np.interp(P, self.P_arr, self.Tsat)
     def get_hl(self, P): return np.interp(P, self.P_arr, self.hl)
     def get_hg(self, P): return np.interp(P, self.P_arr, self.hg)
@@ -92,9 +92,9 @@ class FastIAPWS:
     def get_kl(self, P): return np.interp(P, self.P_arr, self.kl)
     def get_kg(self, P): return np.interp(P, self.P_arr, self.kg)
     
-    # Méthodes d'accès 2D (grid=False force l'évaluation point par point)
+    # 2D access methods (grid=False forces point-by-point evaluation)
     def get_sub_rhol(self, P, H): 
-        # On utilise np.ravel()[0] pour être certain de renvoyer un scalaire pur
+        # Using np.ravel()[0] to ensure a pure scalar is returned
         return np.ravel(self.rhol_sub_spline(P, H, grid=False))[0]
         
     def get_sub_T(self, P, H): 
@@ -114,13 +114,19 @@ class statesVariables():
     - voidFractionCorrel (str): Correlation model used for void fraction calculations (e.g., 'modBestion', 'HEM1').
     - frfaccorel (str): Correlation model used for friction factor calculations (e.g., 'base', 'blasius', 'Churchill').
     - P2Pcorel (str): Correlation model used for two-phase pressure multiplier (e.g., 'base', 'HEM1').
-    - D_h (float): Hydraulic diameter of the system.
-    - flowArea (float): Flow area of the system.
+    - D_h (float): Array representing the hydraulic diameter of each cell (m²).
     - DV (float): Differential volume between cells.
     - g (float): Gravitational acceleration (9.81 m/s²).
-    - K_loss (float): Loss coefficient in the system.
     - Dz (float): Distance between cells.
-    - Poro (float): Porosity of the system.
+    - poro (float): Array representing the porosity for each cell.
+    - areaMatrix: Array representing the flow area for each cell (m²).
+    - q__: Array representing the heat flux for each cell (W/m²).
+    - phs: Array representing the heating perimeter for each cell (m).
+    - qFlow: Mass flow rate of the fluid (kg/s).
+    - rf: Fuel radius (m).
+    - rw: channel radius (m).
+    - rsin: Array representing the ratio of small to large flow areas for each cell.
+
 
     Methods:
     - createFields(): Initializes temporary arrays for cell-specific properties such as densities, void fractions, friction factors, and geometric areas. Uses specific methods to populate these arrays.
@@ -141,7 +147,7 @@ class statesVariables():
 
     """
 
-    def __init__(self, U, P, H, voidFraction, clad_radius, pin_pitch, pitch, D_h, areaMatrix, poro, DV, voidFractionCorrel, frfaccorel, P2Pcorel, Dz, q__, phs, qFlow, rf, rw, kexp, kcon, rsin):
+    def __init__(self, U, P, H, voidFraction, clad_radius, pin_pitch, pitch, D_h, areaMatrix, poro, DV, voidFractionCorrel, frfaccorel, P2Pcorel, Dz, q__, phs, qFlow, rf, rw, rsin):
         
         self.nCells = len(U)
         self.U = U
@@ -164,8 +170,6 @@ class statesVariables():
         self.rf = rf
         self.rw = rw
         self.height = self.Dz * self.nCells
-        self.kexp = kexp
-        self.kcon = kcon
         self.rsin = rsin
         self.clad_radius = clad_radius
         self.pin_pitch = pin_pitch
@@ -306,9 +310,9 @@ class statesVariables():
                 if xeq >= Xs:
                     QUALITY = xeq
                 else:
-                    # --- 1. CORRECTION DES DENSITÉS ---
-                    # On calcule les densités exactes via IAPWS pour éviter l'AttributeError
-                    # et s'affranchir de self.rholTEMP qui n'est pas encore mis à jour.
+                    # --- 1. DENSITY CORRECTION ---
+                    # Computing exact densities via IAPWS to avoid AttributeError
+                    # and avoid using self.rholTEMP which has not yet been updated.
                     p_mpa = p * 1e-6
                     H_liq_eval = min_lisse(H * 1e-3, hl, 0.5)
                     rhol = FAST_IAPWS.get_sub_rhol(p_mpa, H_liq_eval)
@@ -316,9 +320,9 @@ class statesVariables():
                     
                     u = self.U[i]
                     
-                    # --- 2. CORRECTION DES PROPRIÉTÉS DU LIQUIDE ---
-                    # Le modèle exige les propriétés du LIQUIDE (suffixe 'l') 
-                    # et non de la vapeur (suffixe 'g') !
+                    # --- 2. LIQUID PROPERTY CORRECTION ---
+                    # The model requires LIQUID properties (suffix 'l')
+                    # and NOT vapor properties (suffix 'g')!
                     muf = FAST_IAPWS.get_mul(p_mpa)
                     Re = rhol * abs(u) * self.D_h[i] / muf
 
@@ -326,7 +330,7 @@ class statesVariables():
                     k_f = FAST_IAPWS.get_kl(p_mpa)
                     Pr = Cpf * muf / k_f
 
-                    # --- 3. CORRECTION DES INDEX HORS-LIMITES ---
+                    # --- 3. OUT-OF-BOUNDS INDEX CORRECTION ---
                     idx_q = min(i, len(self.q__) - 1)
                     idx_dv = min(i, len(self.DV) - 1)
                     qdp = self.q__[idx_q] * self.DV[idx_dv] / (2 * np.pi * self.rw * self.height)
@@ -440,7 +444,7 @@ class statesVariables():
         if self.voidFractionCorrel == 'HEM1':
             return 0
 
-        # Issu des papiers de Hibiki et al. et Al-Saif et al.: 
+        # From papers by Hibiki et al. and Al-Saif et al.:
         # Drift-flux model for upward dispersed two-phase flows in vertical medium-to-large round tubes
         # Accurate modeling of annular gas-water flow across diverse inclination angles using an advanced drift-flux correlation
         if self.voidFractionCorrel == 'Hibiki_Al-Saif':
@@ -492,7 +496,7 @@ class statesVariables():
             Vgj_final = if_lisse(T, Tsat-DTSUB, 0.5, Vgj_diphasique, 0.0)
             return Vgj_final
 
-        #Issu du papier de Ozaki et al: Development of drift-flux model based on 8 × 8 BWR rod bundle geometry experimentsunder prototypic temperature and pressure conditions
+        # From paper by Ozaki et al.: Development of drift-flux model based on 8 × 8 BWR rod bundle geometry experimentsunder prototypic temperature and pressure conditions
         if self.voidFractionCorrel == 'Ozaki':
             if self.rhogTEMP[i] == 0:
                 return 0
@@ -591,7 +595,7 @@ class statesVariables():
             C0_final = if_lisse(H, hl, 5.0, C0_sat, C0_trans)
             return C0_final
 
-        #Issu du papier de Ozaki et al: Development of drift-flux model based on 8 × 8 BWR rod bundle geometry experimentsunder prototypic temperature and pressure conditions
+        # From paper by Ozaki et al.: Development of drift-flux model based on 8 × 8 BWR rod bundle geometry experimentsunder prototypic temperature and pressure conditions
         if self.voidFractionCorrel == 'Ozaki':
             rho_g = self.rhogTEMP[i]
             rho_l = self.rholTEMP[i]
@@ -602,7 +606,7 @@ class statesVariables():
             ratio = self.clad_radius * 2.0 / self.pin_pitch
             A = 1.015 + 0.05 * ratio
             B = 0.015 + 0.05 * ratio
-            ratio_table = np.array([0.3, 0.5, 0.7]) # pas idéal, il faut trouver le papier de Julia et al. pour une expression explicite de C et D : Julia JE, Hibiki T, Ishii M, Yun BJ, Park GC. Drift-fluxmodel in a sub-channel of rod bundle geometry
+            ratio_table = np.array([0.3, 0.5, 0.7]) # not ideal, need to find the paper by Julia et al. for an explicit expression of C and D: Julia JE, Hibiki T, Ishii M, Yun BJ, Park GC. Drift-flux model in a sub-channel of rod bundle geometry
             C_table = np.array([26.3, 21.2, 34.1])
             D_table = np.array([0.780, 0.762, 0.925])
             idx = np.argmin(np.abs(ratio_table - ratio))
@@ -687,7 +691,7 @@ class statesVariables():
             phi2phi = 1 + 3*epsilon
         elif self.P2Pcorel == 'lockhartMartinelli':
             return self.lockhartMartinelli(i)
-        elif self.P2Pcorel == 'friedel':
+        elif self.P2Pcorel == 'friedel': #Validated
             return self.friedel(i)
         elif self.P2Pcorel == 'HEM1': #Validated
             phi2phi = (rho/rho_l)*((rho_l/rho_g)*x_th + +1)
@@ -701,81 +705,83 @@ class statesVariables():
         return phi2phi
     def getPhi2Expansion(self, i):
         """
-        Multiplicateur diphasique en expansion soudaine (Modèle de Romie)
+        Two-phase multiplier for sudden expansion (Romie model)
+        PA Lottes. Expansion losses in two-phase flow. Nuclear Science and Engineering, 9(1) :26-31, 1961.
         """
         x = self.xThTEMP[i]
         epsilon = self.voidFractionTEMP[i]
         rho_l = self.rholTEMP[i]
         rho_g = self.rhogTEMP[i]
-        # Sécurité numérique : si on est en monophasique liquide pur
+        # Numerical safety: if purely single-phase liquid
         if x <= 1e-5 or epsilon <= 1e-5:
             return 1.0
         if x >= 0.999 or epsilon >= 0.999:
             return (rho_l / rho_g)
-        # Modèle de Romie
+        # Romie model
         phi2_exp = ((1 - x)**2) / (1 - epsilon) + (rho_l / rho_g) * (x**2 / epsilon)
         
         return phi2_exp
 
     def getPhi2Contraction(self, i):
         """
-        Multiplicateur diphasique en contraction soudaine (Modèle de Chisholm)
+        Two-phase multiplier for sudden contraction (Chisholm model)
+        Duncan Chisholm. Two-Phase Flow in Pipelines and Heat Exchangers. George Godwin, London, 1983.
         """
         x = self.xThTEMP[i]
         epsilon = self.voidFractionTEMP[i]
         rho_l = self.rholTEMP[i]
         rho_g = self.rhogTEMP[i]
-        sigma_A = self.rsin[i]  # Ratio d'aire (A_petit / A_grand)
+        sigma_A = self.rsin[i]  # Area ratio (A_small / A_large)
         
-        # Sécurité numérique pour le monophasique ou si pas de contraction (sigma_A = 1)
+        # Numerical safety for single-phase flow or no contraction (sigma_A = 1)
         if x <= 1e-5 or epsilon <= 1e-5 or sigma_A >= 0.999:
             return 1.0
         
         if x >= 0.999 or epsilon >= 0.999 or sigma_A<=1e-5:
             return (rho_l / rho_g)
-        # --- 1. Calcul du paramètre de Martinelli (X) ---
+        # --- 1. Calculation of the Martinelli parameter (X) ---
         mu_g = FAST_IAPWS.get_mug(self.P[i]*1e-6)
         mu_l = FAST_IAPWS.get_mul(self.P[i]*1e-6)
         X_LM = ((1 - x) / x)**0.9 * (rho_g / rho_l)**0.5 * (mu_g / mu_l)**0.1
         
-        # --- 2. Calcul de K_o ---
+        # --- 2. Calculation of K_o ---
         if X_LM >= 1.0:
             K_o = (1.0 + x * (rho_l / rho_g - 1.0))**0.5
         else:
             K_o = (rho_l / rho_g)**0.25
             
-        # --- 3. Calcul de C_c (Équation 52) ---
+        # --- 3. Calculation of C_c (Equation 52) ---
         C_c = 1.0 / (0.639 * (1.0 - sigma_A)**0.5 + 1.0)
         
-        # --- 4. Calcul de B ---
-        # Numérateur de B
+        # --- 4. Calculation of B ---
+        # Numerator of B
         num_B = (1.0 / K_o) * (1.0 / (sigma_A * C_c)**2 - 1.0) - (2.0 / (K_o * C_c * sigma_A**2)) + (2.0 / (sigma_A**2 * K_o**0.28))
-        # Dénominateur de B
+        # Denominator of B
         den_B = (1.0 / (sigma_A * C_c)**2) - 1.0 - (2.0 / (C_c * sigma_A**2)) + (2.0 / sigma_A**2)
         
         if den_B == 0:
-            B = 0.0  # Fallback de sécurité
+            B = 0.0  # Safety fallback
         else:
             B = num_B / den_B
             
-        # --- 5. Multiplicateur final ---
+        # --- 5. Final multiplier ---
         phi2_con = 1.0 + (rho_l / rho_g - 1.0) * (B * x * (1.0 - x) + x**2)
         return phi2_con
     
     #Get the positive and negative flow areas for a given cell (take into account the two-phase pressure multiplier and friction factor)
     def getAreas(self, i):
         if self.voidFractionTEMP[i] > -0.001:
-            # --- FACE POSITIVE (i-1) ---
+            # --- POSITIVE FACE (i-1) ---
             A_pos = self.areaMatrix[i-1]
             
-            # Friction linéaire classique
+            # Classical linear friction
             loss_fric_pos = (self.getPhi2Phi(i-1)/4) * (self.fTEMP[i-1] / self.D_h[i-1]) * self.DV[i-1]
             A_chap_pos = A_pos + loss_fric_pos 
 
-            # --- FACE NÉGATIVE (i) ---
+            # --- NEGATIVE FACE (i) ---
             A_neg = self.areaMatrix[i]
             
-            # Friction linéaire classique
+            # Classical linear friction
             loss_fric_neg = (self.getPhi2Phi(i)/4) * (self.fTEMP[i] / self.D_h[i]) * self.DV[i]
             A_chap_neg = A_neg - loss_fric_neg  
 
@@ -882,8 +888,9 @@ class statesVariables():
     
     def friedel(self, i):
         """
-        Multiplicateur diphasique de frottement (Corrélation de Friedel)
-        Note : Cette corrélation renvoie phi^2_lo (Liquid-Only).
+        Friction two-phase multiplier (Friedel correlation)
+        Note: This correlation returns phi^2_lo (Liquid-Only).
+        A Tapucu. The thermal-hydraulics of two-phase systems. École Polytechnique de Montréal, 2009.
         """
         x = self.xThTEMP[i]
         epsilon = self.voidFractionTEMP[i]
@@ -891,38 +898,38 @@ class statesVariables():
         rho_g = self.rhogTEMP[i]
         P_MPa = self.P[i] * 1e-6
 
-        # Sécurité numérique pour le monophasique
+        # Numerical safety for single-phase flow
         if x <= 1e-5 or epsilon <= 1e-5:
             return 1.0
 
-        # Propriétés thermodynamiques
+        # Thermodynamic properties
         mu_l = FAST_IAPWS.get_mul(P_MPa)
         mu_g = FAST_IAPWS.get_mug(P_MPa)
         sigma = FAST_IAPWS.get_sigma(P_MPa)
 
-        # Flux massique G (kg/m^2/s) et Diamètre hydraulique
+        # Mass flux G (kg/m^2/s) and hydraulic diameter
         G = self.rhoTEMP[i] * abs(self.U[i])
         D_h = self.D_h[i]
 
-        # Densité homogène (Équation 41)
+        # Homogeneous density (Equation 41)
         rho_H = 1.0 / (x / rho_g + (1.0 - x) / rho_l)
 
-        # Nombres adimensionnels (Froude et Weber)
+        # Dimensionless numbers (Froude and Weber)
         Fr = (G**2) / (self.g * D_h * rho_H**2)
         We = (G**2 * D_h) / (sigma * rho_H)
 
-        # Coefficients de friction de McAdams (Liquid-only et Gas-only)
+        # McAdams friction coefficients (Liquid-only and Gas-only)
         Re_lo = G * D_h / mu_l
         Re_go = G * D_h / mu_g
         f_lo = 0.079 * (Re_lo)**(-0.25)
         f_go = 0.079 * (Re_go)**(-0.25)
 
-        # Paramètres intermédiaires E, F, H
+        # Intermediate parameters E, F, H
         E = (1.0 - x)**2 + x**2 * (rho_l * f_go) / (rho_g * f_lo)
         F = x**0.78 * (1.0 - x)**0.224
         H_param = (rho_l / rho_g)**0.91 * (mu_g / mu_l)**0.19 * (1.0 - mu_g / mu_l)**0.7
 
-        # Multiplicateur final (Équation 40)
+        # Final multiplier (Equation 40)
         phi2_lo = E + (3.24 * F * H_param) / (Fr**0.045 * We**0.035)
         return phi2_lo
     

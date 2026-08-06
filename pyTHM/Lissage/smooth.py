@@ -2,7 +2,7 @@ import numpy as np
 
 def if_lisse(x, y, delta, a, b):
     """
-    Transition douce entre a et b autour de la condition x > y.
+    Smooth transition between a and b around the condition x > y.
     """
     u = (x - y) / delta
     return b + (a - b) * 0.5 * (1.0 + np.tanh(0.5 * u))

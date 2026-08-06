@@ -32,11 +32,18 @@ class DFMclass():
         - pOutlet (Pa), tInlet (K): Inlet velocity, outle t pressure, and inlet enthalpy.
         - qFlow: Mass flow rate of the fluid (kg/s).
         - height (m), fuelRadius (m), cladRadius (m): Geometry of the channel (length, fuel, and clad radii).
+        - pin_pitch: Distance between fuel pins in the assembly (m).
         - pitch: Channel width or distance, depending on the geometry.
         - canalType: Geometry type of the channel, either 'square' or 'cylindrical'.
         - numericalMethod: Chosen method for numerical resolution (e.g., Gauss-Seidel, FVM, BiGStab).
         - voidFractionCorrel, frfaccorel, P2Pcorel: Correlations used for void fraction and other flow properties.
         - dt, t_tot: Time-step and total simulation time for transient analysis.
+        - porosities: Array of porosity values along the channel.
+        - acools: Array of flow areas for the coolant along the channel (m²).
+        - dhs: Array of hydraulic diameters along the channel (m).
+        - phs: Array of heating perimeters along the channel (m).
+        - kexp, kcon: Arrays of singular pressure drop coefficients for expansion and contraction along the channel.
+        - rsin: Array of flow area ratios (small/large) along the channel.
         """
 
         """
@@ -50,6 +57,7 @@ class DFMclass():
         - calculateResiduals(): Calculates the residuals for velocity, pressure, and void fraction, and monitors the convergence.
         - testConvergence(k): Checks if the solution has converged based on residuals after iteration k.
         - residualsVisu(): Updates and visualizes residuals during the iterative solving process.
+        - update_jump_source(): Updates the source term for momentum to take into account singular pressure drops due to expansions and contractions in the channel.
         - resolveDFM(): Main function that orchestrates the simulation by calling initializations, solving the system, and managing iterations and convergence criteria.
         - plotResults(): Plots the results of the simulation, including velocity, pressure, enthalpy, and void fraction profiles.
         - setInitialFieldsTransient(): Initializes the fields for transient simulation.
@@ -210,7 +218,7 @@ class DFMclass():
         return self.QFUEL
     
     def update_sources(self, S_mass, S_mom, S_h):
-        """Met à jour les termes sources latéraux (cross-flow et conduction) avant chaque itération"""
+        """Updates the lateral source terms (cross-flow and conduction) before each iteration"""
         self.S_mass = S_mass
         self.S_mom = S_mom
         self.S_h = S_h
@@ -232,7 +240,7 @@ class DFMclass():
             self.H = [np.ones(self.nFaces)*self.hInlet] #
             self.voidFraction = [np.array([i*self.epsilonTarget/self.nFaces for i in range(self.nFaces)])]
 
-            updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius,  self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
+            updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.rsin_face)
             updateVariables.createFields()
                 
             self.xTh = [np.ones(self.nFaces)]
@@ -256,7 +264,7 @@ class DFMclass():
                 self.H = [self.enthalpyList[self.timeCount]]
                 self.voidFraction = [self.voidFractionList[self.timeCount]]
 
-                updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
+                updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.rsin_face)
                 updateVariables.createFields()
 
                 self.xTh = [np.ones(self.nFaces)]
@@ -518,13 +526,13 @@ class DFMclass():
         self.FVM = VAR_VFM_Class
 
     #Calculate the residuals
-    def calculateResiduals(self):#change les residus
+    def calculateResiduals(self):# updates the residuals
         self.EPSresiduals.append(np.linalg.norm(self.voidFraction[-1] - self.voidFraction[-2]))
         self.rhoResiduals.append(np.linalg.norm((self.rho[-1] - self.rho[-2])/self.rho[-1]))
         self.xThResiduals.append(np.linalg.norm(self.xTh[-1] - self.xTh[-2]))
 
     #Checking for convergence
-    def testConvergence(self, k):#change rien et return un boolean
+    def testConvergence(self, k):# does not change anything and returns a boolean
         print(f'Convergence test number {k}, RES: errEPS: {self.EPSresiduals[-1]}, errRHO: {self.rhoResiduals[-1]}, errQua: {self.xThResiduals[-1]}')
         if self.EPSresiduals[-1] < self.epsOuterIteration and self.rhoResiduals[-1] < self.epsOuterIteration: #and self.xThResiduals[-1] < 1e-3 :
             #print(f'Convergence test number {k}, RES: errEPS: {self.EPSresiduals[-1]}, errRHO: {self.rhoResiduals[-1]}, errQua: {self.xThResiduals[-1]}')
@@ -561,15 +569,15 @@ class DFMclass():
 
     #Function to visualise the live evolution of the resuaduels
     def residualsVisu(self):
-        # Mise à jour des données de la ligne
+        # Update the line data
         self.line.set_xdata(self.I)
         self.line.set_ydata(self.rhoResiduals)
 
-        # Ajuste les limites des axes si nécessaire
-        self.ax.relim()         # Recalcule les limites des données
-        self.ax.autoscale_view()  # Réajuste la vue automatiquement
+        # Adjust axis limits if necessary
+        self.ax.relim()         # Recomputes data limits
+        self.ax.autoscale_view()  # Automatically readjusts the view
 
-        # Dessine les modifications
+        # Draw the modifications
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
     
@@ -582,11 +590,14 @@ class DFMclass():
         self.hInlet = IAPWS97(T = self.tInlet, P = self.P[-1][0]*10**(-6)).h*1000 #J/kg
 
     def update_jump_source(self):
+        """
+        Updates the source term for the momentum equation to account for numerical artifacts and singular pressure losses.
+        """
         self.S_mom = np.zeros(self.nFaces)
         
-        # 1. Instanciation de l'objet pour les corrélations diphasiques
-        water = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
-        # Connexion en temps réel pour que les corrélations utilisent les bonnes valeurs
+        # 1. Instantiation of the object for two-phase correlations
+        water = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.rsin_face)
+        # Real-time connection so that the correlations use the correct values
         water.xThTEMP = self.xTh[-1]
         water.voidFractionTEMP = self.voidFraction[-1]
         water.rholTEMP = self.rhoL[-1]
@@ -595,7 +606,7 @@ class DFMclass():
         
         for i in range(1, self.nFaces - 1):
             A1 = self.acools[i-1]
-            # La cellule aval est i (sauf à la dernière face)
+            # The downstream cell is i (except at the last face)
             A2 = self.acools[i] if i < self.nCells else self.acools[-1]
             A_face = self.areaMatrix[i]
             
@@ -603,28 +614,28 @@ class DFMclass():
             rho_m = self.rho[-1][i]
             rho_l = self.rhoL[-1][i] 
             
-            # Débit massique local à travers la face
+            # Local mass flow rate through the face
             m_dot = rho_m * u_m * A_face
             
             force_artifact_N = 0.0
             force_perte_N = 0.0
             
-            # --- 1. CORRECTION DE L'ARTEFACT NUMÉRIQUE DE BERNOULLI (FVM) ---
+            # --- 1. NUMERICAL BERNOULLI ARTIFACT CORRECTION (FVM) ---
             if abs(A1 - A2) > 1e-6:
-                # A. Ce que la matrice FVM calcule REELLEMENT par télescopage conservatif
-                # C'est exactement (rho * U_aval^2 - rho * U_amont^2)
+                # A. What the FVM matrix actually computes by conservative telescoping
+                # This is exactly (rho * U_downstream^2 - rho * U_upstream^2)
                 dP_fvm = (m_dot**2 / rho_m) * (1.0/(A2**2) - 1.0/(A1**2))
                 
-                # B. Ce que la physique dicte (Récupération pure de Bernoulli)
+                # B. What physics dictates (pure Bernoulli recovery)
                 dP_ana = (m_dot**2 / (2.0 * rho_m)) * (1.0/(A2**2) - 1.0/(A1**2))
                 
-                # L'artefact est l'erreur native de la matrice FVM. 
+                # The artifact is the native error of the FVM matrix.
                 artifact = dP_fvm - dP_ana
                 force_artifact_N = artifact * A_face
 
-            # --- 2. CALCUL EXACT DES PERTES DE CHARGE SINGULIÈRES (K) ---
+            # --- 2. EXACT CALCULATION OF SINGULAR PRESSURE LOSSES (K) ---
             if self.kexp_face[i] > 1e-6 or self.kcon_face[i] > 1e-6:
-                # Le K de PARCS (ou StarterDD) est toujours calibré sur la vitesse de la cellule aval (A2)
+                # The K coefficient from PARCS (or StarterDD) is always calibrated on the downstream cell velocity (A2)
                 G_true = m_dot / A2
                 facteur_cinetique = 0.5 * (G_true**2) / rho_l
                 
@@ -636,9 +647,9 @@ class DFMclass():
                 dP_perte = (self.kexp_face[i] * phi2_exp + self.kcon_face[i] * phi2_con) * facteur_cinetique
                 force_perte_N = dP_perte * A_face
                 
-            # --- 3. INJECTION DANS LE TERME SOURCE ---
+            # --- 3. INJECTION INTO THE SOURCE TERM ---
             if abs(force_artifact_N) > 0.0 or abs(force_perte_N) > 0.0:
-                # On ajoute la correction de l'artefact et on retire la force de résistance fluide
+                # Add the artifact correction and subtract the fluid resistance force
                 self.S_mom[i] += force_artifact_N - force_perte_N
 
     #Main function to solve the drift flux model
@@ -649,12 +660,12 @@ class DFMclass():
         if self.dt == 0:
 
             self.setInitialFields()
-            # Active le mode interactif
+            # Activate interactive mode
             #plt.ion()
-            # Crée la figure et l'axe
+            # Create the figure and axis
             #self.fig, self.ax = plt.subplots()
-            # Initialisation de la ligne qui sera mise à jour
-            #self.line, = self.ax.plot(self.I, self.rhoResiduals, 'r-', marker='o')  # 'r-' pour une ligne rouge avec des marqueurs
+            # Initialization of the line that will be updated
+            #self.line, = self.ax.plot(self.I, self.rhoResiduals, 'r-', marker='o')  # 'r-' for a red line with markers
 
             #Loop for the outer iterations (velocity-pressure and enthalpy)
             for k in range(self.maxOuterIteration):
@@ -674,7 +685,7 @@ class DFMclass():
                 Htemp = resolveSystem.x
 
                 self.H.append(Htemp)
-                updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
+                updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.rsin_face)
                 updateVariables.updateFields()
 
                 self.xTh.append(updateVariables.xThTEMP)
@@ -717,13 +728,13 @@ class DFMclass():
         elif self.dt != 0:
 
             self.setInitialFieldsTransient()
-            # Active le mode interactif
+            # Activate interactive mode
             plt.ion()
-            # Crée la figure et l'axe
+            # Create the figure and axis
             self.fig, self.ax = plt.subplots()
             self.figh, self.axh = plt.subplots()   
-            # Initialisation de la ligne qui sera mise à jour
-            self.line, = self.ax.plot(self.I, self.rhoResiduals, 'r-', marker='o')  # 'r-' pour une ligne rouge avec des marqueurs
+            # Initialization of the line that will be updated
+            self.line, = self.ax.plot(self.I, self.rhoResiduals, 'r-', marker='o')  # 'r-' for a red line with markers
             
             for t in range(0, len(self.timeList)-1):
                 self.timeCount = t
@@ -744,7 +755,7 @@ class DFMclass():
                     Htemp = resolveSystem.x
 
                     self.H.append(Htemp)
-                    updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
+                    updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.rsin_face)
                     updateVariables.updateFields()
 
                     self.xTh.append(updateVariables.xThTEMP)
@@ -811,7 +822,7 @@ class DFMclass():
             plt.ioff()
             plt.show()
 
-            #besoin d'interpoler pour avoir le bon nombre de valeur (passer de node centered a cell centered)
+            #need to interpolate to get the correct number of values (convert from node-centered to cell-centered)
         
         self.T_water = np.zeros(self.nFaces)
         for i in range(self.nFaces):
@@ -857,7 +868,7 @@ class DFMclass():
         self.h_z = self.H[-1]
         self.T_surf = np.zeros(self.nCells)
         self.Hc = np.zeros(self.nCells)
-        updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
+        updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.rsin_face)
         updateVariables.createFields()
         for i in range(self.nCells):
             hl, hg = updateVariables.getPhasesEnthalpy(i)
@@ -876,13 +887,13 @@ class DFMclass():
             C_g = FAST_IAPWS.get_cpg(P_MPa) * 1000.0
             sigma = FAST_IAPWS.get_sigma(P_MPa)
             h_fg = (hg - hl) * 1000.0
-            # Régime liquide: Dittus-Boelter
+            # Liquid regime: Dittus-Boelter
             Pr_l = (C_l * mu_l) / k_l
             Pr_g = (C_g * mu_g) / k_g
             Re_l_db = max(1e-4, updateVariables.getReynoldsNumberLiquid(i))
             Hc_liq = 0.023 * (Pr_l**0.4) * (Re_l_db**0.8) * k_l / self.D_h[i]
             T_surf_liq = (phi / Hc_liq) + self.T_water[i]
-            # Régime ébullition : Chen
+            # Boiling regime: Chen
             G = self.rho[-1][i] * abs(self.U[-1][i])
             x_flow = updateVariables.getQuality(i)
             x_borne_sup = min_lisse(0.999, x_flow, 1e-4)
@@ -896,7 +907,7 @@ class DFMclass():
             S_fz = 1.0/(1.0 + 2.53e-6*(Re_l_chen*F**(1.25))**1.17)
             C_fz = 0.00122 * (k_l**(0.79) * C_l**(0.45) * rho_l**(0.49))/(mu_l**(0.29) * sigma**(0.5) * h_fg**(0.24) * rho_g**0.24)
             T_surf_guess = self.T_water[i] + phi/H_c_chen
-            #Boucle Newton pour ébullition nuclée
+            #Newton loop for nucleate boiling
             for j in range(20):
                 delta_T_sat = max_lisse(0.01, T_surf_guess - Tsat, 0.1)
                 T_eval = min_lisse(T_surf_guess, 647.0, 0.5)
@@ -918,11 +929,11 @@ class DFMclass():
                 T_surf_guess = 0.5 * T_surf_new + 0.5 * T_surf_guess
             T_surf_boil = T_surf_guess
             Hc_boil = H_nb + H_c_chen
-            # Régime vapeur: Dittus-Boelter
+            # Vapor regime: Dittus-Boelter
             Re_g_db = max(1e-4, updateVariables.getReynoldsNumberVapor(i))
             Hc_vap = 0.023 * (Pr_g**0.4) * (Re_g_db**0.8) * k_g / self.D_h[i]
             T_surf_vap = (phi / Hc_vap) + self.T_water
-            #Assemblage global
+            #Global assembly
             T_onset = Tsat-DTSUB
             T_surf_trans1 = if_lisse(self.T_water[i], T_onset,0.5,T_surf_boil, T_surf_liq)
             Hc_trans1 = if_lisse(self.T_water[i], T_onset,0.5,Hc_boil, Hc_liq)
@@ -957,7 +968,7 @@ class DFMclass():
     
     #Function to get the phases velocity
     def getPhasesVelocity(self):
-        water = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.kexp_face, self.kcon_face, self.rsin_face)
+        water = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.rsin_face)
         Ul = [water.getUl(i) for i in range(self.nCells)]
         Ug = [water.getUg(i) for i in range(self.nCells)]
         return Ul, Ug

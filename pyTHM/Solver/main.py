@@ -28,6 +28,54 @@ class pyTHM_solver:
         between the water and the fuel rod's outer surface. This allows to solve for the temperature at this outer surface. 
         Then in the FDM_HeatConductionInFuelPin class, solve for the heat conduction using MCFD method. Compute temperature at the center of the fuel rod.
         Options to plot results can be activated giving an array of z values at which the results should be plotted.
+
+        Attributes:
+        - case_name: Name of the case for identification and output files.
+        - canal_type: Type of the canal, either 'cylindrical' or 'square'.
+        - canal_radius: Radius of the canal (m).
+        - fuel_radius: Radius of the fuel rod (m).
+        - gap_radius: Radius of the gap (m).
+        - clad_radius: Outer radius of a pincell(m).
+        - pin_pitch: pincell pitch (m).
+        - fuel_rod_length: Length of a fuel rod (m).
+        - tInlet: Inlet temperature of the coolant (K).
+        - pOutlet: Outlet pressure of the coolant (Pa).
+        - qFlow: Mass flow rate of the coolant (kg/s).
+        - Powtot: Total power generated in a fuel rod (W).
+        - axial_p_form: Axial power form factor, representing the power distribution along the axial dimension of the fuel rod.
+        - fraction_pow_fuel: Fraction of the total power that is deposited in the fuel.
+        - k_fuel: Thermal conductivity of the fuel (W/m/K).
+        - H_gap: Heat transfer coefficient through the gap (W/m^2/K).
+        - k_clad: Thermal conductivity of the clad (W/m/K).
+        - I_z: Number of mesh elements along the axial dimension.
+        - I_f: Number of mesh elements in the fuel.
+        - I_c: Number of mesh elements in the clad.
+        - plot_at_z: List of axial positions at which to plot the results.
+        - solveConduction: Boolean indicating whether to solve the heat conduction problem in the fuel rod.
+        - dt: Time step for transient simulations (s).
+        - t_tot: Total simulation time for transient simulations (s).
+        - frfaccorel: Friction factor correlation to use in the convection solver ('Churchill' is recommended for a wide range of Reynolds numbers).
+        - P2Pcorel: Two phase multiplier ('lockhartMartinelli', 'friedel', 'HEM1', 'HEM2', 'MNmodel').
+        - voidFractionCorrel: Drift flux model to use in the convection solver ('GEramp', 'Ozaki', 'EPRIvoidModel', 'HEM', 'modBestion').
+        - numericalMethod: Numerical method to use in the convection solver ('FVM' for Finite Volume Method, 'FDM' for Finite Difference Method).
+        - porosities: Array of porosity values along the axial dimension (optional).
+        - acools: Array of coolant flow areas along the axial dimension (optional) (m²).
+        - dhs: Array of hydraulic diameters along the axial dimension (optional) (m).
+        - phs: Array of heating perimeter along the axial dimension (optional) (m).
+        - kexp_profile: Array of singular pressure drop coefficients due to expansions along the axial dimension (optional).
+        - kcon_profile: Array of singular pressure drop coefficients due to contractions along the axial dimension (optional).
+        - rsin_profile: Array of ratios of flow areas (small/large) along the axial dimension (optional).
+        - water_rod: Boolean indicating whether the calculation accounts for water rods (True) or not (False).
+        - acools_wr: Array of coolant flow areas in the water rod along the axial dimension (optional) (m²).
+        -porosities_wr: Array of porosity values in the water rod along the axial dimension (optional).
+        - dhs_wr: Array of hydraulic diameters in the water rod along the axial dimension (optional) (m).
+        - kexp_wr: Array of singular pressure drop coefficients due to expansions in the water rod along the axial dimension (optional).
+        - p_wr: Array of water rod perimeter along the axial dimension (optional) (m).
+        - rwall_wr: Array of water rod wall thermal resistance along the axial dimension (optional) (m²K/W).
+        - hole_z: List of axial positions of the holes in the water rod (optional) (m).
+        - hole_A: List of areas of the holes in the water rod (optional) (m²).
+        - Idelchik_enter: List of local loss coefficients for water entering the water rod through holes (optional).
+        - Idelchik_exit: List of local loss coefficients for water exiting the water rod through holes(optional).
         """
         self.name = case_name
         self.water_rod = water_rod
@@ -114,7 +162,7 @@ class pyTHM_solver:
             alpha_prev = 0.04 
             delta_P_prev = None
 
-            for secant_iter in range(15): # Max 15 essais pour équilibrer les pressions d'entrée
+            for secant_iter in range(15): # Max 15 attempts to balance inlet pressures
                 qFlow_wr = alpha * qFlow
                 qFlow_actif = (1 - alpha) * qFlow
                 
@@ -218,7 +266,7 @@ class pyTHM_solver:
                     break
 
                 if delta_P_prev is not None:
-                    if delta_P != delta_P_prev: # Sécurité mathématique
+                    if delta_P != delta_P_prev: # Mathematical safety check
                         derivative = (delta_P - delta_P_prev) / (alpha - alpha_prev)
                         alpha_next = alpha - delta_P / derivative
                         alpha_next = max(0.01, min(0.20, alpha_next))
@@ -235,11 +283,11 @@ class pyTHM_solver:
             self.convection_wr = DFM_wr
             self.alpha_final = alpha
         else:
-            # --- RÉSOLUTION SIMPLE (SANS WATER ROD) ---
+            # --- SIMPLE RESOLUTION (WITHOUT WATER ROD) ---
             print("\n--- Résolution sans Water Rod (canal actif seul) ---")
-            qFlow_actif = self.qFlow # 100% du débit va dans l'actif
+            qFlow_actif = self.qFlow # 100% of the flow goes to the active channel
             
-            # Pas d'échange latéral, donc sources = 0
+            # No lateral exchange, therefore sources = 0
             S_mass_a, S_mom_a, S_h_a = np.zeros(I_z+1), np.zeros(I_z+1), np.zeros(I_z+1)
             
             DFM_actif = DFMclass(canal_type, I_z, tInlet, qFlow_actif, pOutlet, fuel_rod_length, 
@@ -253,7 +301,7 @@ class pyTHM_solver:
             DFM_actif.resolveDFM()
             
             self.convection_sol = DFM_actif
-            self.convection_wr = None  # Pas de water rod
+            self.convection_wr = None  # No water rod
             self.alpha_final = 0.0
 
         if self.solveConduction:
@@ -276,9 +324,9 @@ class pyTHM_solver:
     
     def set_transitoire(self, t_tot, Tini, dt):
         self.t_tot, self.dt = t_tot, dt           
-        self.N_temps = round(self.t_tot / self.dt) # pas de temps (timesteps), il faut etre un nombre entier
-        self.T = np.zeros((self.N_temps+1, self.N_vol)) # tableau 2D de temperature. 
-        self.T[0] = Tini # Tini est une liste
+        self.N_temps = round(self.t_tot / self.dt) # number of timesteps, must be an integer
+        self.T = np.zeros((self.N_temps+1, self.N_vol)) # 2D temperature array.
+        self.T[0] = Tini # Tini is a list
         return
 
 
@@ -481,17 +529,17 @@ class pyTHM_solver:
 
     def plot_actif_vs_wr(self):
         """
-        Génère une figure complète des paramètres thermohydrauliques.
-        Si le water rod est activé, compare Actif et WR. Sinon, affiche uniquement l'Actif.
+        Generates a complete figure of the thermohydraulic parameters.
+        If the water rod is activated, compares Active and WR channels. Otherwise, displays the Active channel only.
         """
         import matplotlib.pyplot as plt
         import os
 
-        # Extraction des coordonnées axiales (z) de l'actif
+        # Extraction of the axial coordinates (z) of the active channel
         z = self.convection_sol.z_mesh
         has_wr = hasattr(self, 'convection_wr') and self.convection_wr is not None
 
-        # Création d'une figure avec 4 lignes et 2 colonnes
+        # Creation of a figure with 4 rows and 2 columns
         fig, axs = plt.subplots(4, 2, figsize=(16, 20))
         
         if has_wr:
@@ -500,7 +548,7 @@ class pyTHM_solver:
         else:
             fig.suptitle(f"Profil Thermohydraulique : Canal Actif Seul\nCas : {self.name}", fontsize=16, fontweight='bold')
 
-        # --- 1. Pression ---
+        # --- 1. Pressure ---
         axs[0, 0].plot(z, self.convection_sol.P[-1], label="Actif", color="darkred", linewidth=2)
         if has_wr: axs[0, 0].plot(z_wr, self.convection_wr.P[-1], label="Water Rod", color="salmon", linestyle="--", linewidth=2)
         axs[0, 0].set_title("Pression", fontweight='bold')
@@ -508,7 +556,7 @@ class pyTHM_solver:
         axs[0, 0].grid(True, linestyle=':', alpha=0.7)
         axs[0, 0].legend()
 
-        # --- 2. Densités (Mélange et Liquide) ---
+        # --- 2. Densities (Mixture and Liquid) ---
         axs[0, 1].plot(z, self.convection_sol.rho[-1], label="Mélange (Actif)", color="indigo", linewidth=2)
         axs[0, 1].plot(z, self.convection_sol.rhoL[-1], label="Liquide (Actif)", color="blue", alpha=0.5)
         if has_wr:
@@ -519,7 +567,7 @@ class pyTHM_solver:
         axs[0, 1].grid(True, linestyle=':', alpha=0.7)
         axs[0, 1].legend()
 
-        # --- 3. Taux de vide ---
+        # --- 3. Void fraction ---
         axs[1, 0].plot(z, self.convection_sol.voidFraction[-1], label="Actif", color="darkgreen", linewidth=2)
         if has_wr: axs[1, 0].plot(z_wr, self.convection_wr.voidFraction[-1], label="Water Rod", color="lightgreen", linestyle="--", linewidth=2)
         axs[1, 0].set_title("Taux de vide", fontweight='bold')
@@ -527,7 +575,7 @@ class pyTHM_solver:
         axs[1, 0].grid(True, linestyle=':', alpha=0.7)
         axs[1, 0].legend()
 
-        # --- 4. Titre thermodynamique (Quality) ---
+        # --- 4. Thermodynamic quality ---
         axs[1, 1].plot(z, self.convection_sol.xTh[-1], label="Actif", color="darkorange", linewidth=2)
         if has_wr: axs[1, 1].plot(z_wr, self.convection_wr.xTh[-1], label="Water Rod", color="gold", linestyle="--", linewidth=2)
         axs[1, 1].set_title("Titre thermodynamique", fontweight='bold')
@@ -535,7 +583,7 @@ class pyTHM_solver:
         axs[1, 1].grid(True, linestyle=':', alpha=0.7)
         axs[1, 1].legend()
 
-        # --- 5. Température du fluide ---
+        # --- 5. Fluid temperature ---
         axs[2, 0].plot(z, self.convection_sol.T_water, label="Actif", color="red", linewidth=2)
         if has_wr: axs[2, 0].plot(z_wr, self.convection_wr.T_water, label="Water Rod", color="pink", linestyle="--", linewidth=2)
         axs[2, 0].set_title("Température du fluide", fontweight='bold')
@@ -543,7 +591,7 @@ class pyTHM_solver:
         axs[2, 0].grid(True, linestyle=':', alpha=0.7)
         axs[2, 0].legend()
 
-        # --- 6. Vitesses (Mélange, Vapeur, Liquide) ---
+        # --- 6. Velocities (Mixture, Vapor, Liquid) ---
         axs[2, 1].plot(z, self.convection_sol.U[-1], label="Mélange (Actif)", color="black", linewidth=2)
         axs[2, 1].plot(z, self.convection_sol.Ug, label="Vapeur (Actif)", color="red", linewidth=1.5)
         axs[2, 1].plot(z, self.convection_sol.Ul, label="Liquide (Actif)", color="blue", linewidth=1.5)
@@ -556,7 +604,7 @@ class pyTHM_solver:
         axs[2, 1].grid(True, linestyle=':', alpha=0.7)
         axs[2, 1].legend()
 
-        # --- 7. Profil de puissance ---
+        # --- 7. Power profile ---
         axs[3, 0].plot(z, self.convection_sol.q__, label="Actif", color="darkmagenta", linewidth=2)
         if has_wr: axs[3, 0].plot(z_wr, self.convection_wr.q__, label="Water Rod", color="violet", linestyle="--", linewidth=2)
         axs[3, 0].set_title("Profil de puissance (Densité volumique)", fontweight='bold')
@@ -564,18 +612,18 @@ class pyTHM_solver:
         axs[3, 0].grid(True, linestyle=':', alpha=0.7)
         axs[3, 0].legend()
         
-        # --- 8. Case vide (Pour garder la symétrie) ---
+        # --- 8. Empty subplot (to maintain symmetry) ---
         axs[3, 1].axis('off')
 
-        # Ajout des labels X pour chaque graphique
+        # Add X labels for each subplot
         for ax in axs.flat:
             if ax.has_data():
                 ax.set_xlabel("Position axiale z [m]")
 
-        # Ajustement des espaces entre les graphiques
+        # Adjustment of spacing between subplots
         plt.tight_layout(rect=[0, 0.03, 1, 0.96])
         
-        # --- LOGIQUE DE SAUVEGARDE ---
+        # --- SAVE LOGIC ---
         results_dir = "results"
         os.makedirs(results_dir, exist_ok=True)
         
@@ -934,14 +982,14 @@ class plotting:
             velocity_errors['max'].append(np.max(velocity_error[i]))
             velocity_errors['min'].append(np.min(velocity_error[i]))
 
-        # Création des graphiques pour pression, température et vitesse
+        # Creation of plots for pressure, temperature and velocity
         self.plot_error_graph(models, voidFraction_errors, temperature_errors, pressure_errors, velocity_errors)
         plt.show()
 
     def cleanList(self, data):
         # Convert to numpy array if it's not already
         data = np.array(data)
-        # Filtrer les NaN et les valeurs infinies
+        # Filter out NaN and infinite values
         cleaned_data = data[np.isfinite(data)]
         return cleaned_data
 
@@ -992,25 +1040,25 @@ class plotting:
         plt.show()
 
 
-    # Fonction pour créer des graphiques pour les différentes variables
+    # Function to create plots for the different variables
     def plot_error_graph(self, models, void_fraction_errors, temperature_errors, pressure_errors, velocity_errors):
         fig, ax = plt.subplots()
 
         # Positions pour chaque groupe de barres
-        width = 0.2  # Largeur des barres
-        x = np.arange(len(models))  # Positions des modèles
+        width = 0.2  # Bar width
+        x = np.arange(len(models))  # Model positions
 
-        # Barres pour les erreurs de fraction de vide
+        # Bars for void fraction errors
         bars_void_fraction = ax.bar(x - 1.5*width, void_fraction_errors['mean'], width, 
                                     yerr=[void_fraction_errors['mean'], [void_fraction_errors['max'][i] - void_fraction_errors['mean'][i] for i in range(len(models))]],
                                     capsize=5, label='Fraction de vide', color='skyblue')
 
-        # Barres pour les erreurs de température
+        # Bars for temperature errors
         bars_temperature = ax.bar(x - 0.5*width, temperature_errors['mean'], width, 
                                 yerr=[temperature_errors['mean'], [temperature_errors['max'][i] - temperature_errors['mean'][i] for i in range(len(models))]],
                                 capsize=5, label='Température', color='lightcoral')
 
-        # Barres pour les erreurs de pression
+        # Bars for pressure errors
         bars_pressure = ax.bar(x + 0.5*width, pressure_errors['mean'], width, 
                             yerr=[pressure_errors['mean'], [pressure_errors['max'][i] - pressure_errors['mean'][i] for i in range(len(models))]],
                             capsize=5, label='Pression', color='lightgreen')
@@ -1020,7 +1068,7 @@ class plotting:
                             yerr=[velocity_errors['mean'], [velocity_errors['max'][i] - velocity_errors['mean'][i] for i in range(len(models))]],
                             capsize=5, label='Vitesse', color='orange') """
 
-        # Ajout des labels et titre
+        # Add labels and title
         ax.set_xlabel('Modèles')
         ax.set_ylabel('Erreurs mean/max (%)')
         ax.set_title('Comparaison des erreurs de fraction de vide, température, pression et vitesse')
