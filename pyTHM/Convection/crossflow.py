@@ -1,8 +1,8 @@
 import numpy as np
 from pyTHM.Lissage.smooth import if_lisse, max_lisse, min_lisse
-from pyTHM.WaterProperties.waterProperties import FAST_IAPWS
+from pyTHM.WaterProperties.waterProperties import FastIAPWS
 
-def compute_crossflow(DFM_actif, DFM_wr, hole_z_indices, hole_A, Idelchik_enter, Idelchik_exit, rwall_wr, v_lat_prev):
+def compute_crossflow(DFM_actif, DFM_wr, hole_z_indices, hole_A, Idelchik_enter, Idelchik_exit, rwall_wr, v_lat_prev, FAST_IAPWS):
     """
     Calculates the mass, momentum, and enthalpy source terms for crossflow between the active channel and the water rod, considering both thermal conduction and mass transfer through holes.
 

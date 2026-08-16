@@ -1,12 +1,13 @@
 #Used to run the THM prototype class and compare the results with a reference THM_DONJON case.
-#Authors : Clement Huet, Raphael Guasch
+#Authors : Clement Huet, Raphael Guasch, Benjamin Godard
 
 
 from ..Conduction.conduction import HeatConductionInFuelPin as FDM_Fuel
 from ..Convection.convection import DFMclass
 from ..Convection.crossflow import compute_crossflow
 import numpy as np
-from iapws import IAPWS97
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 from openpyxl import Workbook
@@ -14,30 +15,23 @@ import os
 import re
 
 class pyTHM_solver:
-    def __init__(self, case_name, canal_type,
-                 canal_radius, fuel_radius, gap_radius, clad_radius, pin_pitch, fuel_rod_length, tInlet, pOutlet, qFlow, Powtot, axial_p_form, fraction_pow_fuel,
-                 k_fuel, H_gap, k_clad, I_z, I_f, I_c, plot_at_z, solveConduction,
-                 dt, t_tot, frfaccorel = 'base', P2Pcorel = 'base', voidFractionCorrel = 'GEramp', numericalMethod= 'FVM', 
-                 porosities=None, acools=None, dhs=None, phs=None, kexp_profile=None, kcon_profile=None, rsin_profile=None, water_rod=True,
-                 acools_wr=None, porosities_wr=None, dhs_wr=None, kexp_wr=None, p_wr=None, rwall_wr=None,
-                 hole_z=None, hole_A=None, Idelchik_enter=None, Idelchik_exit=None):
+    def __init__(self, case_name, channel_type, geometric_data, tInlet, pOutlet, qFlow, Powtot, axial_p_form, fraction_pow_fuel,
+                 k_fuel, H_gap, k_clad, I_f, I_c,
+                 water_rod = False, 
+                 plot_at_z=[], solveConduction=False, fast_iapws_table=None,
+                 dt=0, t_tot=0, frfaccorel = 'base', P2Pcorel = 'base', voidFractionCorrel = 'GEramp', numericalMethod= 'FVM'):
         """
-        Main constructor for THM case, first set of parameters correspond to canal properties, second set to fuel/gap/clad properties
+        Main constructor for THM case, first set of parameters correspond to channel properties, second set to fuel/gap/clad properties
         The structure followed is : 
-        In FVM_ConvectionInCanal class : use a finite volume method to solve heat convection in the canal, then use the Dittus-Boelter correlation to obtain the convective heat transfer coef 
+        In FVM_ConvectionInCanal class : use a finite volume method to solve heat convection in the channel, then use the Dittus-Boelter correlation to obtain the convective heat transfer coef 
         between the water and the fuel rod's outer surface. This allows to solve for the temperature at this outer surface. 
         Then in the FDM_HeatConductionInFuelPin class, solve for the heat conduction using MCFD method. Compute temperature at the center of the fuel rod.
         Options to plot results can be activated giving an array of z values at which the results should be plotted.
 
         Attributes:
         - case_name: Name of the case for identification and output files.
-        - canal_type: Type of the canal, either 'cylindrical' or 'square'.
-        - canal_radius: Radius of the canal (m).
-        - fuel_radius: Radius of the fuel rod (m).
-        - gap_radius: Radius of the gap (m).
-        - clad_radius: Outer radius of a pincell(m).
-        - pin_pitch: pincell pitch (m).
-        - fuel_rod_length: Length of a fuel rod (m).
+        - channel_type: Type of the channel, either 'cylindrical' or 'square'.
+        - geometric_data : dictionnary summarizing the "active_flow_data", "water_rod_data" and "fuel_data"
         - tInlet: Inlet temperature of the coolant (K).
         - pOutlet: Outlet pressure of the coolant (Pa).
         - qFlow: Mass flow rate of the coolant (kg/s).
@@ -47,79 +41,100 @@ class pyTHM_solver:
         - k_fuel: Thermal conductivity of the fuel (W/m/K).
         - H_gap: Heat transfer coefficient through the gap (W/m^2/K).
         - k_clad: Thermal conductivity of the clad (W/m/K).
-        - I_z: Number of mesh elements along the axial dimension.
         - I_f: Number of mesh elements in the fuel.
         - I_c: Number of mesh elements in the clad.
         - plot_at_z: List of axial positions at which to plot the results.
         - solveConduction: Boolean indicating whether to solve the heat conduction problem in the fuel rod.
+        - fast_iapws_table : FastIAPWS project instanced a - priori based on outlet pressure.
         - dt: Time step for transient simulations (s).
         - t_tot: Total simulation time for transient simulations (s).
         - frfaccorel: Friction factor correlation to use in the convection solver ('Churchill' is recommended for a wide range of Reynolds numbers).
         - P2Pcorel: Two phase multiplier ('lockhartMartinelli', 'friedel', 'HEM1', 'HEM2', 'MNmodel').
         - voidFractionCorrel: Drift flux model to use in the convection solver ('GEramp', 'Ozaki', 'EPRIvoidModel', 'HEM', 'modBestion').
         - numericalMethod: Numerical method to use in the convection solver ('FVM' for Finite Volume Method, 'FDM' for Finite Difference Method).
-        - porosities: Array of porosity values along the axial dimension (optional).
-        - acools: Array of coolant flow areas along the axial dimension (optional) (m²).
-        - dhs: Array of hydraulic diameters along the axial dimension (optional) (m).
-        - phs: Array of heating perimeter along the axial dimension (optional) (m).
-        - kexp_profile: Array of singular pressure drop coefficients due to expansions along the axial dimension (optional).
-        - kcon_profile: Array of singular pressure drop coefficients due to contractions along the axial dimension (optional).
-        - rsin_profile: Array of ratios of flow areas (small/large) along the axial dimension (optional).
-        - water_rod: Boolean indicating whether the calculation accounts for water rods (True) or not (False).
-        - acools_wr: Array of coolant flow areas in the water rod along the axial dimension (optional) (m²).
-        -porosities_wr: Array of porosity values in the water rod along the axial dimension (optional).
-        - dhs_wr: Array of hydraulic diameters in the water rod along the axial dimension (optional) (m).
-        - kexp_wr: Array of singular pressure drop coefficients due to expansions in the water rod along the axial dimension (optional).
-        - p_wr: Array of water rod perimeter along the axial dimension (optional) (m).
-        - rwall_wr: Array of water rod wall thermal resistance along the axial dimension (optional) (m²K/W).
-        - hole_z: List of axial positions of the holes in the water rod (optional) (m).
-        - hole_A: List of areas of the holes in the water rod (optional) (m²).
-        - Idelchik_enter: List of local loss coefficients for water entering the water rod through holes (optional).
-        - Idelchik_exit: List of local loss coefficients for water exiting the water rod through holes(optional).
         """
+        # General parameters
         self.name = case_name
+        self.channel_type = channel_type # cylindrical or square, used to determine the cross sectional flow area in the channel and the hydraulic diameter
         self.water_rod = water_rod
-        if acools_wr is None:
-            self.water_rod = False
+
         # time atributes to prepare for transient simulations
         self.t0 = 0
         self.dt = dt
         self.t_end = t_tot
 
-        # canal attributes
-
-        self.r_w = canal_radius # outer canal radius (m) if type is cylindrical, if type = square rw is the diameter of inscribed circle in the square canal, ie half the square's side.
-        self.canal_type = canal_type # cylindrical or square, used to determine the cross sectional flow area in the canal and the hydraulic diameter
-        self.Lf = fuel_rod_length # fuel rod length in m
-        self.pitch = canal_radius * 2.0 # distance between the centers of two adjacent fuel rods in meters
-        
-
-        self.tInlet = tInlet
-        self.qFlow = qFlow #  mass flux in kg/s, assumed to be constant along the axial profile.
-        self.I_z = I_z # number of mesh elements on axial mesh
-        self.rhoInlet = 1000
-        self.pOutlet =  pOutlet #Pa
-        self.uInlet = self.qFlow / (self.rhoInlet*acools[0]) #m/s
-
+        # Power distribution parameters : 
         self.Powtot = Powtot # Total reactor power in W
         self.axial_pow_form = axial_p_form # axial power form factors, representing the power distribution along the axial dimension of the fuel rod, used to compute the fission power in the fuel rod.
         self.Fpow = fraction_pow_fuel # fraction of the total power that is deposited in the fuel, used to compute the fission power in the fuel rod.
 
-        self.r_f = fuel_radius # fuel pin radius in meters
-        self.gap_r = gap_radius # gap radius in meters, used to determine mesh elements for constant surface discretization
-        self.clad_r = clad_radius # clad radius in meters, used to determine mesh elements for constant surface discretization
-        self.pin_pitch = pin_pitch # distance between the centers of two adjacent fuel rods in meters
+        # thermal solver boundary conditions and thermo-physical data
+        # convection problem
+        self.tInlet = tInlet
+        self.qFlow = qFlow #  mass flux in kg/s, assumed to be constant along the axial profile.
+        self.pOutlet =  pOutlet #Pa
+        self.FAST_IAPWS = fast_iapws_table
+        self.rhoInlet = self.FAST_IAPWS.get_rhol(self.pOutlet)
+        # conduction problem
         self.k_fuel = k_fuel # thermal conductivity coefficient in fuel W/m/K
         self.H_gap = H_gap # Heat transfer coefficient through gap W/m^2/K
         self.k_clad = k_clad # thermal conductivity coefficient in clad W/m/K
+
+        # meshing parameters : 
+        self.I_z = geometric_data["active_flow_data"]["number_of_axial_meshes"] # number of mesh elements on axial mesh
         self.I_f = I_f # number of mesh elements in the fuel
         self.I_c = I_c # number of mesh elements in clad
 
+        ## Unpack geometric parameters
+        # active coolant channel attributes
+        porosities = geometric_data["active_flow_data"]["porosities"]
+        acools = geometric_data["active_flow_data"]["coolant_cross_sectional_areas"]
+        dhs = geometric_data["active_flow_data"]["hydraulic_diamters"]
+        phs = geometric_data["active_flow_data"]["heated_perimeters"]
+        kexp_profile = geometric_data["active_flow_data"]["k_expansion"]
+        kcon_profile = geometric_data["active_flow_data"]["k_contraction"] 
+        rsin_profile =  geometric_data["active_flow_data"]["singular_contraction_ratios"] 
+        self.pitch = geometric_data["active_flow_data"]["pitch"]
+
+        # water rod attributes
+        if water_rod:
+            acools_wr = geometric_data["water_rod_data"]["moderator_cross_sectional_areas"]
+            porosities_wr = geometric_data["water_rod_data"]["porosities"]
+            dhs_wr = geometric_data["water_rod_data"]["hydraulic_diamters"]
+            kexp_wr = geometric_data["water_rod_data"]["k_expansion"]
+            p_wr = geometric_data["water_rod_data"]["permieters"]
+            rwall_wr = geometric_data["water_rod_data"]["thermal_resistances"]
+            Idelchik_enter = geometric_data["water_rod_data"]["Idelchik_enter"]
+            Idelchik_exit = geometric_data["water_rod_data"]["Idelchik_exit"]
+            hole_A = geometric_data["water_rod_data"]["hole_A"]
+            hole_Z = geometric_data["water_rod_data"]["hole_Z"]
+        else:
+            acools_wr = None
+            porosities_wr = None
+            dhs_wr = None
+            kexp_wr = None
+            p_wr = None
+            rwall_wr = None
+            Idelchik_enter = None
+            Idelchik_exit = None
+            hole_A = None
+            hole_Z = None
+        
+        # fuel geometrical parameters
+        self.fuel_radius = geometric_data["fuel_data"]["fuel_radius"] # fuel pin radius in meters
+        self.gap_radius = geometric_data["fuel_data"]["gap_radius"] # gap radius in meters, used to determine mesh elements for constant surface discretization
+        self.clad_radius = geometric_data["fuel_data"]["clad_radius"] # clad radius in meters, used to determine mesh elements for constant surface discretization
+        self.pin_pitch = geometric_data["fuel_data"]["pin_pitch"] # distance between the centers of two adjacent fuel rods in meters
+        self.fuel_length = geometric_data["fuel_data"]["max_rod_length"]
+
+        # estimate uInlet in the active flow based on mass flow rate, first estimated for rhoInlet and the coolant cross sectional area.
+        self.uInlet = self.qFlow / (self.rhoInlet*acools[0]) #m/s
+
+        # solver options :
         self.frfaccorel = frfaccorel # friction factor correlation
         self.P2Pcorel = P2Pcorel # pressure drop correlation
         self.voidFractionCorrel = voidFractionCorrel # void fraction correlation
-        self.numericalMethod = numericalMethod # numerical method used to solve the convection problem in the canal
-        #Poro = 0.5655077285
+        self.numericalMethod = numericalMethod # numerical method used to solve the convection problem in the channel
 
         self.plot_results = plot_at_z
         self.solveConduction = solveConduction
@@ -129,30 +144,30 @@ class pyTHM_solver:
             self.transient = False
             print("$$$---------- THM: prototype, steady state case.")
 
-        # Prepare and solve 1D heat convection along the z direction in the canal.
+        # Prepare and solve 1D heat convection along the z direction in the channel.
         print("$$---------- Calling DFM class.")
-        print(f"Setting up heat convection solution along the axial dimension. zmax = {self.Lf} m with {self.I_z} axial elements.")
+        print(f"Setting up heat convection solution along the axial dimension. zmax = {self.fuel_length} m with {self.I_z} axial elements.")
         # Create an object of the class DFMclass
         print(f'self.I_z: {self.I_z}')
         print(f'self.qFlow: {self.qFlow}')
         print(f'self.pOutlet: {self.pOutlet}')
-        print(f'self.Lf: {self.Lf}')
-        print(f'self.r_f: {self.r_f}')
-        print(f'self.clad_r: {self.clad_r}')
-        print(f'self.r_w: {self.r_w}')
-        print(f'self.Dz: {self.Lf/self.I_z}')
+        print(f'self.fuel_length: {self.fuel_length}')
+        print(f'self.fuel_radius: {self.fuel_radius}')
+        print(f'self.clad_radius: {self.clad_radius}')
+        print(f'self.pitch: {self.pitch}')
+        print(f'self.Dz: {self.fuel_length/self.I_z}')
         print(f'self.dt: {self.dt}')
-        print(f'Courant number: {self.uInlet*self.dt/(self.Lf/self.I_z)}')
+        print(f'Courant number: {self.uInlet*self.dt/(self.fuel_length/self.I_z)}')
         print(f"Numerical Method {numericalMethod}")
-        self.convection_sol = DFMclass(self.canal_type, self.I_z, self.tInlet, self.qFlow, self.pOutlet, self.Lf, self.r_f, self.clad_r, self.pin_pitch, self.r_w, self.numericalMethod, self.frfaccorel, self.P2Pcorel, self.voidFractionCorrel, dt = self.dt, t_tot = self.t_end, porosities = porosities, acools=acools, dhs = dhs, phs = phs, kexp=kexp_profile, kcon=kcon_profile, rsin=rsin_profile)
+        self.convection_sol = DFMclass(self.channel_type, self.I_z, self.tInlet, self.qFlow, self.pOutlet, self.fuel_length, self.fuel_radius, self.clad_radius, self.pin_pitch, self.pitch, self.numericalMethod, self.frfaccorel, self.P2Pcorel, self.voidFractionCorrel, self.FAST_IAPWS, dt = self.dt, t_tot = self.t_end, porosities = porosities, acools=acools, dhs = dhs, phs = phs, kexp=kexp_profile, kcon=kcon_profile, rsin=rsin_profile)
         print(f'Hydraulic diameter: {self.convection_sol.D_h}')
         
-        Dz_local = fuel_rod_length / I_z
-        z_cells = np.linspace(Dz_local/2, fuel_rod_length - Dz_local/2, I_z)
+        Dz_local = self.fuel_length / self.I_z
+        z_cells = np.linspace(Dz_local/2, self.fuel_length - Dz_local/2, self.I_z)
         if self.water_rod:
             hole_z_indices = []
-            if hole_z is not None:
-                for z in hole_z:
+            if hole_Z is not None:
+                for z in hole_Z:
                     idx = (np.abs(z_cells - z)).argmin()
                     hole_z_indices.append(idx)
             else:
@@ -171,26 +186,26 @@ class pyTHM_solver:
                 v_lat_prev = np.zeros(len(hole_z_indices))
                 v_lat_prev_prev = np.zeros(len(hole_z_indices))
                 omega_dyn = 0.9
-                S_mass_a, S_mom_a, S_h_a = np.zeros(I_z+1), np.zeros(I_z+1), np.zeros(I_z+1)
-                S_mass_w, S_mom_w, S_h_w = np.zeros(I_z+1), np.zeros(I_z+1), np.zeros(I_z+1)
+                S_mass_a, S_mom_a, S_h_a = np.zeros(self.I_z+1), np.zeros(self.I_z+1), np.zeros(self.I_z+1)
+                S_mass_w, S_mom_w, S_h_w = np.zeros(self.I_z+1), np.zeros(self.I_z+1), np.zeros(self.I_z+1)
 
                 for ping_pong in range(40): 
                     
-                    DFM_actif = DFMclass(canal_type, I_z, tInlet, qFlow_actif, pOutlet, fuel_rod_length, 
-                                        fuel_radius, clad_radius, pin_pitch, self.pitch, numericalMethod, 
-                                        frfaccorel, P2Pcorel, voidFractionCorrel,
+                    DFM_actif = DFMclass(channel_type, self.I_z, tInlet, qFlow_actif, pOutlet, self.fuel_length, 
+                                        self.fuel_radius, self.clad_radius, self.pin_pitch, self.pitch, numericalMethod, 
+                                        frfaccorel, P2Pcorel, voidFractionCorrel, self.FAST_IAPWS,
                                         dt=dt, t_tot=t_tot, porosities=porosities, acools=acools, 
                                         dhs=dhs, phs=phs, kexp=kexp_profile, kcon=kcon_profile, rsin=rsin_profile)
                     DFM_actif.set_Fission_Power(Powtot, axial_p_form, fraction_pow_fuel)
                     DFM_actif.update_sources(S_mass_a, S_mom_a, S_h_a)
                     DFM_actif.resolveDFM()
 
-                    kcon_wr_safe = np.zeros(I_z+1) if kexp_wr is None else np.zeros_like(kexp_wr)
-                    rsin_wr_safe = np.ones(I_z+1) if kexp_wr is None else np.ones_like(kexp_wr)
+                    kcon_wr_safe = np.zeros(self.I_z+1) if kexp_wr is None else np.zeros_like(kexp_wr)
+                    rsin_wr_safe = np.ones(self.I_z+1) if kexp_wr is None else np.ones_like(kexp_wr)
                     
-                    DFM_wr = DFMclass(canal_type, I_z, tInlet, qFlow_wr, pOutlet, fuel_rod_length, 
-                                    1e-5, 1e-5, pin_pitch, self.pitch, numericalMethod, 
-                                    frfaccorel, P2Pcorel, voidFractionCorrel,
+                    DFM_wr = DFMclass(channel_type, self.I_z, tInlet, qFlow_wr, pOutlet, self.fuel_length, 
+                                    1e-5, 1e-5, self.pin_pitch, self.pitch, numericalMethod, 
+                                    frfaccorel, P2Pcorel, voidFractionCorrel, self.FAST_IAPWS,
                                     dt=dt, t_tot=t_tot, porosities=porosities_wr, acools=acools_wr, 
                                     dhs=dhs_wr, phs=p_wr, kexp=kexp_wr, kcon=kcon_wr_safe, rsin=rsin_wr_safe)
                     DFM_wr.set_Fission_Power(0.0, axial_p_form, fraction_pow_fuel)
@@ -198,7 +213,7 @@ class pyTHM_solver:
                     DFM_wr.resolveDFM()
                     
                     S_mass_a_new, S_mom_a_new, S_h_a_new, S_mass_w_new, S_mom_w_new, S_h_w_new, v_lat_new = compute_crossflow(
-                        DFM_actif, DFM_wr, hole_z_indices, hole_A, Idelchik_enter, Idelchik_exit, rwall_wr, v_lat_prev
+                        DFM_actif, DFM_wr, hole_z_indices, hole_A, Idelchik_enter, Idelchik_exit, rwall_wr, v_lat_prev, self.FAST_IAPWS
                     )
                     v_lat_new = np.clip(v_lat_new, -80.0, 80.0) 
                     if len(v_lat_new) > 0:
@@ -259,10 +274,10 @@ class pyTHM_solver:
                 
                 delta_P = P_plenum_actif - P_plenum_wr
                 
-                print(f"P_plenum Actif: {P_plenum_actif:.0f} Pa | P_plenum WR: {P_plenum_wr:.0f} Pa | Différence: {delta_P:.1f} Pa")           
+                print(f"Active flow plenum Pressure : {P_plenum_actif:.0f} Pa | Water Rod plenum pressure: {P_plenum_wr:.0f} Pa | Difference: {delta_P:.1f} Pa")           
 
                 if abs(delta_P) < 500.0:
-                    print(">>> Convergence du débit d'entrée (alpha) atteinte !")
+                    print(">>> Reached convergence on inlet mass flow rate (alpha) !")
                     break
 
                 if delta_P_prev is not None:
@@ -284,15 +299,15 @@ class pyTHM_solver:
             self.alpha_final = alpha
         else:
             # --- SIMPLE RESOLUTION (WITHOUT WATER ROD) ---
-            print("\n--- Résolution sans Water Rod (canal actif seul) ---")
+            print("\n--- Résolution sans Water Rod (channel actif seul) ---")
             qFlow_actif = self.qFlow # 100% of the flow goes to the active channel
             
             # No lateral exchange, therefore sources = 0
-            S_mass_a, S_mom_a, S_h_a = np.zeros(I_z+1), np.zeros(I_z+1), np.zeros(I_z+1)
+            S_mass_a, S_mom_a, S_h_a = np.zeros(self.I_z+1), np.zeros(self.I_z+1), np.zeros(self.I_z+1)
             
-            DFM_actif = DFMclass(canal_type, I_z, tInlet, qFlow_actif, pOutlet, fuel_rod_length, 
-                                 fuel_radius, clad_radius, pin_pitch, self.pitch, numericalMethod, 
-                                 frfaccorel, P2Pcorel, voidFractionCorrel,
+            DFM_actif = DFMclass(channel_type, self.I_z, tInlet, qFlow_actif, pOutlet, self.fuel_length, 
+                                 self.fuel_radius, self.clad_radius, self.pin_pitch, self.pitch, numericalMethod, 
+                                 frfaccorel, P2Pcorel, voidFractionCorrel, self.FAST_IAPWS,
                                  dt=dt, t_tot=t_tot, porosities=porosities, acools=acools, 
                                  dhs=dhs, phs=phs, kexp=kexp_profile, kcon=kcon_profile, rsin=rsin_profile)
                                  
@@ -313,7 +328,7 @@ class pyTHM_solver:
             self.get_TFuel_rowlands() # compute and store in the T_eff_fuel attribute the effective fuel temperature given by the Rowlands formula
             self.get_Tfuel_surface() # store in the T_fuel_surface attribute the fuel surface temperature computed
 
-            # extend to Twater : adding a mesh point corresponding to the middle of the canal in the plotting array, add rw to the bounds array and add Twater to the results array
+            # extend to Twater : adding a mesh point corresponding to the middle of the channel in the plotting array, add rw to the bounds array and add Twater to the results array
             for index_z in range(len(self.convection_sol.z_mesh)):
                 self.T_distributions_axial[index_z].extend_to_canal_visu(rw = self.convection_sol.wall_dist, Tw = self.convection_sol.T_water[index_z])
 
@@ -322,6 +337,41 @@ class pyTHM_solver:
                 for z_val in self.plot_results:
                     self.plot_Temperature_at_z(z_val)
     
+    def compute_solver_parameters_from_geometry(self):
+        """
+        From base geometry parameters :
+        
+        Compute the list of coolant cross sectional areas,
+        Compute the list of porosities from base geometry parameters,
+        Compute the list of hydraulic diameters,
+        Compute the list of heating perimeters,
+
+        Assume constant geometry along the z axis,
+        Assume a single fuel rod with, 
+        Assume no channel box or water rods are present.
+        """
+        if self.channel_type=="square":
+            ACool = self.pitch**2 - np.pi*self.clad_radius**2
+            Dh =  4 * ACool / (2*np.pi * self.clad_radius)
+
+        elif self.channel_type == 'cylindrical':
+            ACool = np.pi * (self.pitch/2) ** 2 - np.pi * self.clad_radius ** 2
+            Dh = 4 * ACool / (np.pi * self.pitch + np.pi * self.clad_radius*2)
+
+        # List of axially ordered coolant cross sectional areas
+        coolant_cross_sectional_areas = np.array(self.I_z * [ACool])
+        # List of axially ordered hydraulic diameters
+        dhs = np.array(self.I_z * [Dh])
+        # List of axially ordered heated perimeters
+        phs = np.array(self.I_z * [2*np.pi*self.clad_radius]) 
+        # List of axially ordered porosities
+        porosities = coolant_cross_sectional_areas / self.pitch**2
+
+
+        return coolant_cross_sectional_areas, porosities, dhs, phs
+
+    
+
     def set_transitoire(self, t_tot, Tini, dt):
         self.t_tot, self.dt = t_tot, dt           
         self.N_temps = round(self.t_tot / self.dt) # number of timesteps, must be an integer
@@ -342,7 +392,7 @@ class pyTHM_solver:
     
     def run_Conduction_In_Fuel_at_z(self,z,Qfiss_z,T_surf_z, transient = False):
         print(f"$$---------- Setting up FDM_HeatConductionInFuelPin class for z = {z} m, Qfiss(z) = {Qfiss_z} W/m^3 and T_surf(z) = {T_surf_z} K")
-        heat_conduction = FDM_Fuel(self.r_f, self.I_f, self.gap_r, self.clad_r, self.I_c, Qfiss_z, self.k_fuel, self.k_clad, self.H_gap, z, T_surf_z)
+        heat_conduction = FDM_Fuel(self.fuel_radius, self.I_f, self.gap_radius, self.clad_radius, self.I_c, Qfiss_z, self.k_fuel, self.k_clad, self.H_gap, z, T_surf_z)
         if transient:
             print(f"Error: transient case not implemented yet")
         else:
@@ -413,7 +463,7 @@ class pyTHM_solver:
         return
 
     def plot_Temperature_at_z(self, z_val):
-        print(f"$$---------- Plotting Temperature distribution in rod + canal z = {z_val} m")
+        print(f"$$---------- Plotting Temperature distribution in rod + channel z = {z_val} m")
 
         if z_val in self.convection_sol.z_mesh:
             plane_index = int(np.where(self.convection_sol.z_mesh==z_val)[0][0])
@@ -499,7 +549,7 @@ class pyTHM_solver:
             ax2.plot(self.convection_sol.z_mesh, self.convection_sol.voidFraction[-1], label="Void fraction")
             ax2.set_xlabel("Axial position in m")
             ax2.set_ylabel("Void fraction")
-            ax2.set_title("Void fraction distribution in coolant canal")
+            ax2.set_title("Void fraction distribution in coolant channel")
             ax2.legend(loc="best")
 
         if visuParam[2]:
@@ -507,7 +557,7 @@ class pyTHM_solver:
             ax3.plot(self.convection_sol.z_mesh, self.convection_sol.rho[-1], label="Density")
             ax3.set_xlabel("Axial position in m")
             ax3.set_ylabel("Density in kg/m^3")
-            ax3.set_title("Density distribution in coolant canal")
+            ax3.set_title("Density distribution in coolant channel")
             ax3.legend(loc="best")
 
         if visuParam[3]:
@@ -515,14 +565,14 @@ class pyTHM_solver:
             ax4.plot(self.convection_sol.z_mesh, self.convection_sol.P[-1], label="Pressure")
             ax4.set_xlabel("Axial position in m")
             ax4.set_ylabel("Pressure in Pa")
-            ax4.set_title("Pressure distribution in coolant canal")
+            ax4.set_title("Pressure distribution in coolant channel")
 
         if visuParam[4]:
             fig5, ax5 = plt.subplots()
             ax5.plot(self.convection_sol.z_mesh, self.convection_sol.U[-1], label="Enthalpy")
             ax5.set_xlabel("Axial position in m")
             ax5.set_ylabel("Velocity in m/s")
-            ax5.set_title("Velocity distribution in coolant canal")
+            ax5.set_title("Velocity distribution in coolant channel")
 
         plt.show()
         return
@@ -546,7 +596,7 @@ class pyTHM_solver:
             fig.suptitle(f"Comparaison Thermohydraulique : Actif vs Water Rod\nCas : {self.name}", fontsize=16, fontweight='bold')
             z_wr = self.convection_wr.z_mesh
         else:
-            fig.suptitle(f"Profil Thermohydraulique : Canal Actif Seul\nCas : {self.name}", fontsize=16, fontweight='bold')
+            fig.suptitle(f"Profil Thermohydraulique : channel Actif Seul\nCas : {self.name}", fontsize=16, fontweight='bold')
 
         # --- 1. Pressure ---
         axs[0, 0].plot(z, self.convection_sol.P[-1], label="Actif", color="darkred", linewidth=2)
@@ -1008,7 +1058,7 @@ class plotting:
             ax2.plot(self.caseList[i].convection_sol.z_mesh, self.caseList[i].convection_sol.voidFraction[-1], label=self.caseList[i].voidFractionCorrel)
         ax2.set_xlabel("Axial position in m")
         ax2.set_ylabel("Void fraction")
-        ax2.set_title("Void fraction distribution in coolant canal")
+        ax2.set_title("Void fraction distribution in coolant channel")
         ax2.legend(loc="best")
 
 
@@ -1017,7 +1067,7 @@ class plotting:
             ax3.plot(self.caseList[i].convection_sol.z_mesh, self.caseList[i].convection_sol.rho[-1], label=self.caseList[i].voidFractionCorrel)
         ax3.set_xlabel("Axial position in m")
         ax3.set_ylabel("Density in kg/m^3")
-        ax3.set_title("Density distribution in coolant canal")
+        ax3.set_title("Density distribution in coolant channel")
         ax3.legend(loc="best")
 
 
@@ -1026,7 +1076,7 @@ class plotting:
             ax4.plot(self.caseList[i].convection_sol.z_mesh, self.caseList[i].convection_sol.P[-1], label=self.caseList[i].voidFractionCorrel)
         ax4.set_xlabel("Axial position in m")
         ax4.set_ylabel("Pressure in Pa")
-        ax4.set_title("Pressure distribution in coolant canal")
+        ax4.set_title("Pressure distribution in coolant channel")
         ax4.legend(loc="best")
         plt.show()
 
@@ -1035,7 +1085,7 @@ class plotting:
             ax4.plot(self.caseList[i].convection_sol.z_mesh, self.caseList[i].convection_sol.U[-1], label=self.caseList[i].voidFractionCorrel)
         ax5.set_xlabel("Axial position in m")
         ax5.set_ylabel("Velocity in m/s")
-        ax5.set_title("Velocity distribution in coolant canal")
+        ax5.set_title("Velocity distribution in coolant channel")
         ax5.legend(loc="best")
         plt.show()
 
@@ -1096,7 +1146,7 @@ class plotting:
                     ax2.plot(self.caseList[i].convection_sol.z_mesh, self.caseList[i].convection_sol.voidFraction[-1], label=self.caseList[i].voidFractionCorrel)
                 ax2.set_xlabel("Axial position in m")
                 ax2.set_ylabel("Void fraction")
-                ax2.set_title("Void fraction distribution in coolant canal")
+                ax2.set_title("Void fraction distribution in coolant channel")
                 ax2.legend(loc="best")
 
             if visuParam[2]:
@@ -1105,7 +1155,7 @@ class plotting:
                     ax3.plot(self.caseList[i].convection_sol.z_mesh, self.caseList[i].convection_sol.rho[-1], label=self.caseList[i].voidFractionCorrel)
                 ax3.set_xlabel("Axial position in m")
                 ax3.set_ylabel("Density in kg/m^3")
-                ax3.set_title("Density distribution in coolant canal")
+                ax3.set_title("Density distribution in coolant channel")
                 ax3.legend(loc="best")
 
             if visuParam[3]:
@@ -1114,7 +1164,7 @@ class plotting:
                     ax4.plot(self.caseList[i].convection_sol.z_mesh, self.caseList[i].convection_sol.P[-1], label=self.caseList[i].voidFractionCorrel)
                 ax4.set_xlabel("Axial position in m")
                 ax4.set_ylabel("Pressure in Pa")
-                ax4.set_title("Pressure distribution in coolant canal")
+                ax4.set_title("Pressure distribution in coolant channel")
                 ax4.legend(loc="best")
 
             if visuParam[4]:
@@ -1123,7 +1173,7 @@ class plotting:
                     ax5.plot(self.caseList[i].convection_sol.z_mesh, self.caseList[i].convection_sol.U[-1], label=self.caseList[i].voidFractionCorrel)
                 ax5.set_xlabel("Axial position in m")
                 ax5.set_ylabel("Velocity in m/s")
-                ax5.set_title("Velocity distribution in coolant canal")
+                ax5.set_title("Velocity distribution in coolant channel")
                 ax5.legend(loc="best")
 
             fig6, ax6 = plt.subplots()
@@ -1160,7 +1210,7 @@ class plotting:
                     ax2.plot(self.caseList[i].convection_sol.z_mesh, self.caseList[i].convection_sol.voidFraction[-1], label=self.caseList[i].frfaccorel)
                 ax2.set_xlabel("Axial position in m")
                 ax2.set_ylabel("Void fraction")
-                ax2.set_title("Void fraction distribution in coolant canal")
+                ax2.set_title("Void fraction distribution in coolant channel")
                 ax2.legend(loc="best")
 
             if visuParam[2]:
@@ -1169,7 +1219,7 @@ class plotting:
                     ax3.plot(self.caseList[i].convection_sol.z_mesh, self.caseList[i].convection_sol.rho[-1], label=self.caseList[i].frfaccorel)
                 ax3.set_xlabel("Axial position in m")
                 ax3.set_ylabel("Density in kg/m^3")
-                ax3.set_title("Density distribution in coolant canal")
+                ax3.set_title("Density distribution in coolant channel")
                 ax3.legend(loc="best")
 
             if visuParam[3]:
@@ -1178,7 +1228,7 @@ class plotting:
                     ax4.plot(self.caseList[i].convection_sol.z_mesh, self.caseList[i].convection_sol.P[-1], label=self.caseList[i].frfaccorel)
                 ax4.set_xlabel("Axial position in m")
                 ax4.set_ylabel("Pressure in Pa")
-                ax4.set_title("Pressure distribution in coolant canal")
+                ax4.set_title("Pressure distribution in coolant channel")
                 ax4.legend(loc="best")
 
             if visuParam[4]:
@@ -1187,7 +1237,7 @@ class plotting:
                     ax5.plot(self.caseList[i].convection_sol.z_mesh, self.caseList[i].convection_sol.U[-1], label=self.caseList[i].frfaccorel)
                 ax5.set_xlabel("Axial position in m")
                 ax5.set_ylabel("Velocity in m/s")
-                ax5.set_title("Velocity distribution in coolant canal")
+                ax5.set_title("Velocity distribution in coolant channel")
                 ax5.legend(loc="best")
 
             fig6, ax6 = plt.subplots()
@@ -1224,7 +1274,7 @@ class plotting:
                     ax2.plot(self.caseList[i].convection_sol.z_mesh, self.caseList[i].convection_sol.voidFraction[-1], label=self.caseList[i].P2Pcorel)
                 ax2.set_xlabel("Axial position in m")
                 ax2.set_ylabel("Void fraction")
-                ax2.set_title("Void fraction distribution in coolant canal")
+                ax2.set_title("Void fraction distribution in coolant channel")
                 ax2.legend(loc="best")
 
             if visuParam[2]:
@@ -1233,7 +1283,7 @@ class plotting:
                     ax3.plot(self.caseList[i].convection_sol.z_mesh, self.caseList[i].convection_sol.rho[-1], label=self.caseList[i].P2Pcorel)
                 ax3.set_xlabel("Axial position in m")
                 ax3.set_ylabel("Density in kg/m^3")
-                ax3.set_title("Density distribution in coolant canal")
+                ax3.set_title("Density distribution in coolant channel")
                 ax3.legend(loc="best")
 
             if visuParam[3]:
@@ -1242,7 +1292,7 @@ class plotting:
                     ax4.plot(self.caseList[i].convection_sol.z_mesh, self.caseList[i].convection_sol.P[-1], label=self.caseList[i].P2Pcorel)
                 ax4.set_xlabel("Axial position in m")
                 ax4.set_ylabel("Pressure in Pa")
-                ax4.set_title("Pressure distribution in coolant canal")
+                ax4.set_title("Pressure distribution in coolant channel")
                 ax4.legend(loc="best")
 
             if visuParam[4]:
@@ -1251,7 +1301,7 @@ class plotting:
                     ax5.plot(self.caseList[i].convection_sol.z_mesh, self.caseList[i].convection_sol.U[-1], label=self.caseList[i].P2Pcorel)
                 ax5.set_xlabel("Axial position in m")
                 ax5.set_ylabel("Velocity in m/s")
-                ax5.set_title("Velocity distribution in coolant canal")
+                ax5.set_title("Velocity distribution in coolant channel")
                 ax5.legend(loc="best")
 
             fig6, ax6 = plt.subplots()
@@ -1288,7 +1338,7 @@ class plotting:
                     ax2.plot(self.caseList[i].convection_sol.z_mesh, self.caseList[i].convection_sol.voidFraction[-1], label=self.caseList[i].numericalMethod)
                 ax2.set_xlabel("Axial position in m")
                 ax2.set_ylabel("Void fraction")
-                ax2.set_title("Void fraction distribution in coolant canal")
+                ax2.set_title("Void fraction distribution in coolant channel")
                 ax2.legend(loc="best")
 
             if visuParam[2]:
@@ -1297,7 +1347,7 @@ class plotting:
                     ax3.plot(self.caseList[i].convection_sol.z_mesh, self.caseList[i].convection_sol.rho[-1], label=self.caseList[i].numericalMethod)
                 ax3.set_xlabel("Axial position in m")
                 ax3.set_ylabel("Density in kg/m^3")
-                ax3.set_title("Density distribution in coolant canal")
+                ax3.set_title("Density distribution in coolant channel")
                 ax3.legend(loc="best")
 
             if visuParam[3]:
@@ -1306,7 +1356,7 @@ class plotting:
                     ax4.plot(self.caseList[i].convection_sol.z_mesh, self.caseList[i].convection_sol.P[-1], label=self.caseList[i].numericalMethod)
                 ax4.set_xlabel("Axial position in m")
                 ax4.set_ylabel("Pressure in Pa")
-                ax4.set_title("Pressure distribution in coolant canal")
+                ax4.set_title("Pressure distribution in coolant channel")
                 ax4.legend(loc="best")
 
             if visuParam[4]:
@@ -1315,7 +1365,7 @@ class plotting:
                     ax5.plot(self.caseList[i].convection_sol.z_mesh, self.caseList[i].convection_sol.U[-1], label=self.caseList[i].numericalMethod)
                 ax5.set_xlabel("Axial position in m")
                 ax5.set_ylabel("Velocity in m/s")
-                ax5.set_title("Velocity distribution in coolant canal")
+                ax5.set_title("Velocity distribution in coolant channel")
                 ax5.legend(loc="best")
 
             if visuParam[5]:

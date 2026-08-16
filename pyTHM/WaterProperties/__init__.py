@@ -1,5 +1,6 @@
-from .waterProperties import statesVariables
+from .waterProperties import statesVariables, FastIAPWS
 
 __all__ = [
-    "statesVariables"
+    "statesVariables",
+    "FastIAPWS"
 ]

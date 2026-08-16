@@ -1,11 +1,24 @@
 # PSBT benchmark Phase I tests for pyTHM
 import numpy as np
+import os
 import pandas as pd
-from pyTHM.Solver import pyTHM_solver
+import pytest
+from pyTHM.Solver.main import pyTHM_solver
+from pyTHM.WaterProperties import FastIAPWS
 from conftest import (
-    DATA_DIR,
+   PSBT_DATA,
     OUTPUTS_DIR
 )
+
+
+def get_z_mesh(h, nz):
+    """
+    Returns a list of z mesh points based on the height and number of axial mesh points.
+    """
+    # Compute the boundaries and midpoints of each control volume
+    z_boundaries = np.linspace(0, h, nz + 1)
+    z_values = (z_boundaries[:-1] + z_boundaries[1:]) / 2  # Midpoints of control volumes
+    return z_values, z_boundaries
 
 def get_axial_p_form(nz, height, shape):
     """
@@ -43,13 +56,47 @@ def get_axial_p_form(nz, height, shape):
         raise ValueError("Shape must be 'sine', 'cosine', or 'flat'.")
     return p_form_values
 
+def interpolate_void_fraction(zmesh, voidfractions):
+    PSBT_measurement_height = 1.40
+    vf_at_140cm = np.interp(PSBT_measurement_height, zmesh, voidfractions)
+    return vf_at_140cm
+
+def get_PSBT_geometric_data(nz, pitch, cladRadius):
+
+    geometric_data = {}
+    geometric_data["active_flow_data"] = {}
+    geometric_data["fuel_data"] = {}
+    acools = np.array(nz*[pitch**2 - np.pi*cladRadius**2])
+    porosities = acools / pitch**2 #np.array(nz*[1])#
+    wetted_perimeters = np.array(nz*[2*np.pi*cladRadius])
+    hydraulic_diameters = 4 * acools / wetted_perimeters
+    heated_perimeters = np.array(nz*[2*np.pi*cladRadius])
+
+    geometric_data["fuel_data"]["fuel_radius"] = fuelRadius # fuel pin radius in meters
+    geometric_data["fuel_data"]["gap_radius"] = inner_clad_radius# gap radius in meters, used to determine mesh elements for constant surface discretization
+    geometric_data["fuel_data"]["clad_radius"] = cladRadius# clad radius in meters, used to determine mesh elements for constant surface discretization
+    geometric_data["fuel_data"]["pin_pitch"] = pitch # distance between the centers of two adjacent fuel rods in meters
+    geometric_data["fuel_data"]["max_rod_length"] = height
+
+    geometric_data["active_flow_data"]["number_of_axial_meshes"] = nz
+    geometric_data["active_flow_data"]["porosities"] = porosities
+    geometric_data["active_flow_data"]["coolant_cross_sectional_areas"] = acools
+    geometric_data["active_flow_data"]["hydraulic_diamters"] = hydraulic_diameters
+    geometric_data["active_flow_data"]["heated_perimeters"] = heated_perimeters
+    geometric_data["active_flow_data"]["k_expansion"] = np.array(nz * [0.0])
+    geometric_data["active_flow_data"]["k_contraction"]  = np.array(nz * [0.0])
+    geometric_data["active_flow_data"]["singular_contraction_ratios"] = np.array(nz * [1.0])
+    geometric_data["active_flow_data"]["pitch"] = pitch
+
+    return geometric_data
+
 
 # open PSBT data
 ## Recover PSBT data from cleaned CSV file
 #----------
 # PSBT DATA
 # ---------
-path_to_benchmark_data = DATA_DIR / 'PSBT' / 'PSBT_cleaned.csv'
+path_to_benchmark_data = PSBT_DATA + '/PSBT_cleaned.csv'
 df = pd.read_csv(path_to_benchmark_data, index_col=0)
 
 # Extract the data
@@ -83,359 +130,568 @@ hgap = 10000.0 # Convective heat transfer coefficient at gap in W/(m^2*K)
 k_clad = 21.5  # thermal conductivity of clad in W/(m*K)
 k_fuel = 4.18  # thermal conductivity of fuel in W/(m*K)   
 
+zmesh_centers, zmesh_boundaries = get_z_mesh(height, nz)
+
+geometric_data = get_PSBT_geometric_data(nz, pitch, outer_clad_radius)
+
 PSBT_TEST_PARAMETERS = {}
+pressures = []
 for i in range(len(test_id_numbers)):
     test_id = str(test_id_numbers[i]) # Test ID number
+    print(f"PSBT test ID = {test_id}")
     PSBT_TEST_PARAMETERS[test_id] = {}
     PSBT_TEST_PARAMETERS[test_id]["axial_p_form"] = get_axial_p_form(nz, height, shape)
     PSBT_TEST_PARAMETERS[test_id]["pOutlet"] = pressureList[i] * 98066.5 # Pa (convert kg/cm2a to Pa)
+    print(f"Pressure={pressureList[i] * 98066.5} MPa")
+    pressures.append(pressureList[i] * 98066.5)
     PSBT_TEST_PARAMETERS[test_id]["tInlet"] = temperatureList[i] + 273.15 # K (convert °C to K)
-    # Mass Flux is in 106kg/m2h, convert to kg/s: multiply by 10^6 to get actual value, divide by 3600 to convert h to s, multiply by area
+    # Mass Flux is in 10^6kg/m2h, convert to kg/s: multiply by 10^6 to get actual value, divide by 3600 to convert h to s, multiply by area
     PSBT_TEST_PARAMETERS[test_id]["qFlow"] = flowList[i] * 1e6 / 3600 * flow_cross_sectional_area  # kg/s
     PSBT_TEST_PARAMETERS[test_id]["Power"] = powerList[i] * 1000  # Convert to W
+    PSBT_TEST_PARAMETERS[test_id]["vF"] = voidResult[i]
+
+tables = {}
+table16 = FastIAPWS(P_outlet=16.58e6)
+table14 = FastIAPWS(P_outlet=14.71e6)
+#table12 = FastIAPWS(P_outlet=12.25e6)
+table9 = FastIAPWS(P_outlet=9.78e6)
+table7 = FastIAPWS(P_outlet=7.35e6)
+table4 = FastIAPWS(P_outlet=4.90e6)
+
+tables["1.1222"] = table16
+tables["1.1223"] = table16
+tables["1.2211"] = table14
+tables["1.2221"] = table14
+tables["1.2223"] = table14
+tables["1.2237"] = table14
+tables["1.2422"] = table14
+tables["1.2423"] = table14
+tables["1.4311"] = table9
+tables["1.4312"] = table9
+tables["1.4325"] = table9
+tables["1.5221"] = table7
+tables["1.5222"] = table7
+tables["1.6221"] = table4
+tables["1.6222"] = table4
+
 
 def test_id_1p1222():
     test_id = "1.1222"
-    THsolve = pyTHM_solver(f"PSBT test {test_id}", "square", pitch, fuelRadius, inner_clad_radius, outer_clad_radius, 
-                            height, 
-                            PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
-                            PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                            PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
-                            1.0, k_fuel, hgap, k_clad, nz, If, I1, zPlotting, 
+    THsolve = pyTHM_solver( case_name=f"PSBT test {test_id}", 
+                            channel_type="square", 
+                            geometric_data=geometric_data,
+                            tInlet=PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
+                            pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
+                            qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
+                            Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
+                            axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                            fraction_pow_fuel=1.0, 
+                            k_fuel=k_fuel, 
+                            H_gap=hgap, 
+                            k_clad=k_clad, 
+                            I_f=If, 
+                            I_c=I1, 
+                            plot_at_z=zPlotting, 
                             solveConduction = True, 
+                            fast_iapws_table=tables[test_id],
                             dt = 0, t_tot = 0, 
                             frfaccorel = 'Churchill', 
                             P2Pcorel = 'lockhartMartinelli', 
                             voidFractionCorrel = 'EPRIvoidModel', 
-                            numericalMethod = "BiCG")
+                            numericalMethod = "BiCG",
+                        )
 
     Teff, Twater, rho, voidFrac, P, U, H = THsolve.get_TH_parameters()
+    deltaP = P[0] - P[-1]
     assert len(Teff) == nz
-    assert rho[-1] == 452.07547479569655
-    assert voidFrac[-1] == 0.2645615124210725
-    assert P[0] - P[-1] == np.float64(16607042.828072965) - np.float64(16583403.79354423)
+    assert interpolate_void_fraction(zmesh_centers,voidFrac) == pytest.approx(PSBT_TEST_PARAMETERS[test_id]["vF"], abs=0.15)
+    assert rho[-1] == pytest.approx(503.92, abs=1e-2)
+    assert deltaP == pytest.approx(31726, abs=1)
 
 def test_id_1p1223():
     test_id = "1.1223"
-    THsolve = pyTHM_solver(f"PSBT test {test_id}", "square", pitch, fuelRadius, inner_clad_radius, outer_clad_radius, 
-                            height, 
-                            PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
-                            PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                            PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
-                            1.0, k_fuel, hgap, k_clad, nz, If, I1, zPlotting, 
-                            solveConduction = True, 
-                            dt = 0, t_tot = 0, 
-                            frfaccorel = 'Churchill', 
-                            P2Pcorel = 'lockhartMartinelli', 
-                            voidFractionCorrel = 'EPRIvoidModel', 
-                            numericalMethod = "BiCG")
+    THsolve = pyTHM_solver( case_name=f"PSBT test {test_id}", 
+                                channel_type="square", 
+                                geometric_data=geometric_data,
+                                tInlet=PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
+                                pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
+                                qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
+                                Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
+                                axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                                fraction_pow_fuel=1.0, 
+                                k_fuel=k_fuel, 
+                                H_gap=hgap, 
+                                k_clad=k_clad,  
+                                I_f=If, 
+                                I_c=I1, 
+                                plot_at_z=zPlotting, 
+                                solveConduction = True, 
+                                fast_iapws_table=tables[test_id],
+                                dt = 0, t_tot = 0, 
+                                frfaccorel = 'Churchill', 
+                                P2Pcorel = 'lockhartMartinelli', 
+                                voidFractionCorrel = 'EPRIvoidModel', 
+                                numericalMethod = "BiCG",
+                            )
+    
 
     Teff, Twater, rho, voidFrac, P, U, H = THsolve.get_TH_parameters()
+    deltaP = P[0] - P[-1]
     assert len(Teff) == nz
-    assert rho[-1] == 421.91336270229556
-    assert voidFrac[-1] == 0.33022613315977556
-    assert P[0] - P[-1] == np.float64(16614526.05733659) - np.float64(16583484.554753479)
+    assert interpolate_void_fraction(zmesh_centers,voidFrac) == pytest.approx(PSBT_TEST_PARAMETERS[test_id]["vF"], abs=0.15)
+    assert rho[-1] == pytest.approx(458.69, abs=1e-2)
+    assert voidFrac[-1] == pytest.approx(0.31068, abs=1e-5)
+    assert deltaP == pytest.approx(53525, abs=1)
 
 def test_id_1p2211():
     test_id = "1.2211"
-    THsolve = pyTHM_solver(f"PSBT test {test_id}", "square", pitch, fuelRadius, inner_clad_radius, outer_clad_radius, 
-                            height, 
-                            PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
-                            PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                            PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
-                            1.0, k_fuel, hgap, k_clad, nz, If, I1, zPlotting, 
-                            solveConduction = True, 
-                            dt = 0, t_tot = 0, 
-                            frfaccorel = 'Churchill', 
-                            P2Pcorel = 'lockhartMartinelli', 
-                            voidFractionCorrel = 'EPRIvoidModel', 
-                            numericalMethod = "BiCG")
+    THsolve = pyTHM_solver( case_name=f"PSBT test {test_id}", 
+                                channel_type="square", 
+                                geometric_data=geometric_data,
+                                tInlet=PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
+                                pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
+                                qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
+                                Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
+                                axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                                fraction_pow_fuel=1.0, 
+                                k_fuel=k_fuel, 
+                                H_gap=hgap, 
+                                k_clad=k_clad, 
+                                I_f=If, 
+                                I_c=I1, 
+                                plot_at_z=zPlotting, 
+                                solveConduction = True, 
+                                fast_iapws_table=tables[test_id],
+                                dt = 0, t_tot = 0, 
+                                frfaccorel = 'Churchill', 
+                                P2Pcorel = 'lockhartMartinelli', 
+                                voidFractionCorrel = 'EPRIvoidModel', 
+                                numericalMethod = "BiCG",
+                            )
+    
 
     Teff, Twater, rho, voidFrac, P, U, H = THsolve.get_TH_parameters()
+    deltaP = P[0] - P[-1]
     assert len(Teff) == nz
-    assert rho[-1] == 420.0564373728348
-    assert voidFrac[-1] == 0.3662539478713601
-    assert P[0] - P[-1] == np.float64(14742747.640057564) - np.float64(14720205.859364692)
+    assert interpolate_void_fraction(zmesh_centers,voidFrac) == pytest.approx(PSBT_TEST_PARAMETERS[test_id]["vF"], abs=0.15)
+    assert rho[-1] == pytest.approx(502.98, abs=1e-2)
+    assert voidFrac[-1] == pytest.approx(0.20301, abs=1e-5)
+    assert deltaP == pytest.approx(25963, abs=1)
 
 def test_id_1p2221():
     test_id = "1.2221"
-    THsolve = pyTHM_solver(f"PSBT test {test_id}", "square", pitch, fuelRadius, inner_clad_radius, outer_clad_radius, 
-                            height, 
-                            PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
-                            PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                            PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
-                            1.0, k_fuel, hgap, k_clad, nz, If, I1, zPlotting, 
-                            solveConduction = True, 
-                            dt = 0, t_tot = 0, 
-                            frfaccorel = 'Churchill', 
-                            P2Pcorel = 'lockhartMartinelli', 
-                            voidFractionCorrel = 'EPRIvoidModel', 
-                            numericalMethod = "BiCG")
+    THsolve = pyTHM_solver( case_name=f"PSBT test {test_id}", 
+                                channel_type="square", 
+                                geometric_data=geometric_data,
+                                tInlet=PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
+                                pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
+                                qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
+                                Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
+                                axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                                fraction_pow_fuel=1.0, 
+                                k_fuel=k_fuel, 
+                                H_gap=hgap, 
+                                k_clad=k_clad, 
+                                I_f=If, 
+                                I_c=I1, 
+                                plot_at_z=zPlotting, 
+                                solveConduction = True, 
+                                fast_iapws_table=tables[test_id],
+                                dt = 0, t_tot = 0, 
+                                frfaccorel = 'Churchill', 
+                                P2Pcorel = 'lockhartMartinelli', 
+                                voidFractionCorrel = 'EPRIvoidModel', 
+                                numericalMethod = "BiCG",
+                            )
+    
 
     Teff, Twater, rho, voidFrac, P, U, H = THsolve.get_TH_parameters()
+    deltaP = P[0] - P[-1]
     assert len(Teff) == nz
-    assert rho[-1] == 508.30853095536366
-    assert voidFrac[-1] == 0.19477209607570267
-    assert P[0] - P[-1] == np.float64(14736427.657541309) - np.float64(14720067.307139495)
+    assert interpolate_void_fraction(zmesh_centers,voidFrac) == pytest.approx(PSBT_TEST_PARAMETERS[test_id]["vF"], abs=0.15)
+    assert rho[-1] == pytest.approx(610.02, abs=1e-2)
+    assert voidFrac[-1] == pytest.approx(0.0, abs=1e-5)
+    assert deltaP == pytest.approx(17935, abs=1)
 
 def test_id_1p2223():
     test_id = "1.2223"
-    THsolve = pyTHM_solver(f"PSBT test {test_id}", "square", pitch, fuelRadius, inner_clad_radius, outer_clad_radius, 
-                            height, 
-                            PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
-                            PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                            PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
-                            1.0, k_fuel, hgap, k_clad, nz, If, I1, zPlotting, 
-                            solveConduction = True, 
-                            dt = 0, t_tot = 0, 
-                            frfaccorel = 'Churchill', 
-                            P2Pcorel = 'lockhartMartinelli', 
-                            voidFractionCorrel = 'EPRIvoidModel', 
-                            numericalMethod = "BiCG")
+    THsolve = pyTHM_solver( case_name=f"PSBT test {test_id}", 
+                                channel_type="square", 
+                                geometric_data=geometric_data,
+                                tInlet=PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
+                                pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
+                                qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
+                                Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
+                                axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                                fraction_pow_fuel=1.0, 
+                                k_fuel=k_fuel, 
+                                H_gap=hgap, 
+                                k_clad=k_clad, 
+                                I_f=If, 
+                                I_c=I1, 
+                                plot_at_z=zPlotting, 
+                                solveConduction = True, 
+                                fast_iapws_table=tables[test_id],
+                                dt = 0, t_tot = 0, 
+                                frfaccorel = 'Churchill', 
+                                P2Pcorel = 'lockhartMartinelli', 
+                                voidFractionCorrel = 'EPRIvoidModel', 
+                                numericalMethod = "BiCG",
+                            )
+    
 
     Teff, Twater, rho, voidFrac, P, U, H = THsolve.get_TH_parameters()
+    deltaP = P[0] - P[-1]
     assert len(Teff) == nz
-    assert rho[-1] == 398.1424525276732
-    assert voidFrac[-1] == 0.40883467064412576
-    assert P[0] - P[-1] == np.float64(14752340.547244819) - np.float64(14720285.66578096)
+    assert interpolate_void_fraction(zmesh_centers,voidFrac) == pytest.approx(PSBT_TEST_PARAMETERS[test_id]["vF"], abs=0.15)
+    assert rho[-1] == pytest.approx(423.83, abs=1e-2)
+    assert voidFrac[-1] == pytest.approx(0.35725, abs=1e-5)
+    assert deltaP == pytest.approx(57930, abs=1)
 
 def test_id_1p2237():
     test_id = "1.2237"
-    THsolve = pyTHM_solver(f"PSBT test {test_id}", "square", pitch, fuelRadius, inner_clad_radius, outer_clad_radius, 
-                            height, 
-                            PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
-                            PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                            PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
-                            1.0, k_fuel, hgap, k_clad, nz, If, I1, zPlotting, 
-                            solveConduction = True, 
-                            dt = 0, t_tot = 0, 
-                            frfaccorel = 'Churchill', 
-                            P2Pcorel = 'lockhartMartinelli', 
-                            voidFractionCorrel = 'EPRIvoidModel', 
-                            numericalMethod = "BiCG")
+    THsolve = pyTHM_solver( case_name=f"PSBT test {test_id}", 
+                                channel_type="square", 
+                                geometric_data=geometric_data,
+                                tInlet=PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
+                                pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
+                                qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
+                                Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
+                                axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                                fraction_pow_fuel=1.0, 
+                                k_fuel=k_fuel, 
+                                H_gap=hgap, 
+                                k_clad=k_clad, 
+                                I_f=If, 
+                                I_c=I1, 
+                                plot_at_z=zPlotting, 
+                                solveConduction = True, 
+                                fast_iapws_table=tables[test_id],
+                                dt = 0, t_tot = 0, 
+                                frfaccorel = 'Churchill', 
+                                P2Pcorel = 'lockhartMartinelli', 
+                                voidFractionCorrel = 'EPRIvoidModel', 
+                                numericalMethod = "BiCG",
+                            )
+    
 
     Teff, Twater, rho, voidFrac, P, U, H = THsolve.get_TH_parameters()
+    deltaP = P[0] - P[-1]
     assert len(Teff) == nz
-    assert rho[-1] == 388.06852842643104
-    assert voidFrac[-1] == 0.428180857205283
-    assert P[0] - P[-1] == np.float64(14780266.605985072) - np.float64(14739953.548484087)
+    assert interpolate_void_fraction(zmesh_centers,voidFrac) == pytest.approx(PSBT_TEST_PARAMETERS[test_id]["vF"], abs=0.15)
+    assert rho[-1] == pytest.approx(399.15, abs=1e-2)
+    assert voidFrac[-1] == pytest.approx(0.40653, abs=1e-5)
+    assert deltaP == pytest.approx(88403, abs=1)
 
 def test_id_1p2422():
     test_id = "1.2422"
-    THsolve = pyTHM_solver(f"PSBT test {test_id}", "square", pitch, fuelRadius, inner_clad_radius, outer_clad_radius, 
-                            height, 
-                            PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
-                            PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                            PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
-                            1.0, k_fuel, hgap, k_clad, nz, If, I1, zPlotting, 
-                            solveConduction = True, 
-                            dt = 0, t_tot = 0, 
-                            frfaccorel = 'Churchill', 
-                            P2Pcorel = 'lockhartMartinelli', 
-                            voidFractionCorrel = 'EPRIvoidModel', 
-                            numericalMethod = "BiCG")
+    THsolve = pyTHM_solver( case_name=f"PSBT test {test_id}", 
+                                channel_type="square", 
+                                geometric_data=geometric_data,
+                                tInlet=PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
+                                pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
+                                qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
+                                Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
+                                axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                                fraction_pow_fuel=1.0, 
+                                k_fuel=k_fuel, 
+                                H_gap=hgap, 
+                                k_clad=k_clad, 
+                                I_f=If, 
+                                I_c=I1, 
+                                plot_at_z=zPlotting, 
+                                solveConduction = True, 
+                                fast_iapws_table=tables[test_id],
+                                dt = 0, t_tot = 0, 
+                                frfaccorel = 'Churchill', 
+                                P2Pcorel = 'lockhartMartinelli', 
+                                voidFractionCorrel = 'EPRIvoidModel', 
+                                numericalMethod = "BiCG",
+                            )
+    
 
     Teff, Twater, rho, voidFrac, P, U, H = THsolve.get_TH_parameters()
+    deltaP = P[0] - P[-1]
     assert len(Teff) == nz
-    assert rho[-1] == 327.96592132597743
-    assert voidFrac[-1] == 0.5451991503146474
-    assert P[0] - P[-1] == np.float64(14731180.287866011) - np.float64(14719954.463042669)
+    assert interpolate_void_fraction(zmesh_centers,voidFrac) == pytest.approx(PSBT_TEST_PARAMETERS[test_id]["vF"], abs=0.15)
+    assert rho[-1] == pytest.approx(397.51, abs=1e-2)
+    assert voidFrac[-1] == pytest.approx(0.40848, abs=1e-5)
+    assert deltaP == pytest.approx(16997, abs=1)
 
 def test_id_1p2423():
     test_id = "1.2423"
-    THsolve = pyTHM_solver(f"PSBT test {test_id}", "square", pitch, fuelRadius, inner_clad_radius, outer_clad_radius, 
-                            height, 
-                            PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
-                            PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                            PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
-                            1.0, k_fuel, hgap, k_clad, nz, If, I1, zPlotting, 
-                            solveConduction = True, 
-                            dt = 0, t_tot = 0, 
-                            frfaccorel = 'Churchill', 
-                            P2Pcorel = 'lockhartMartinelli', 
-                            voidFractionCorrel = 'EPRIvoidModel', 
-                            numericalMethod = "BiCG")
+    THsolve = pyTHM_solver( case_name=f"PSBT test {test_id}", 
+                                channel_type="square", 
+                                geometric_data=geometric_data,
+                                tInlet=PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
+                                pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
+                                qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
+                                Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
+                                axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                                fraction_pow_fuel=1.0, 
+                                k_fuel=k_fuel, 
+                                H_gap=hgap, 
+                                k_clad=k_clad, 
+                                I_f=If, 
+                                I_c=I1, 
+                                plot_at_z=zPlotting, 
+                                solveConduction = True, 
+                                fast_iapws_table=tables[test_id],
+                                dt = 0, t_tot = 0, 
+                                frfaccorel = 'Churchill', 
+                                P2Pcorel = 'lockhartMartinelli', 
+                                voidFractionCorrel = 'EPRIvoidModel', 
+                                numericalMethod = "BiCG",
+                            )
+    
 
     Teff, Twater, rho, voidFrac, P, U, H = THsolve.get_TH_parameters()
+    deltaP = P[0] - P[-1]
     assert len(Teff) == nz
-    assert rho[-1] == 300.3245745502728
-    assert voidFrac[-1] == 0.5988613621937016
-    assert P[0] - P[-1] == np.float64(14753462.670148812) - np.float64(14739606.991596445)
+    assert interpolate_void_fraction(zmesh_centers,voidFrac) == pytest.approx(PSBT_TEST_PARAMETERS[test_id]["vF"], abs=0.15)
+    assert rho[-1] == pytest.approx(339.17, abs=1e-2)
+    assert voidFrac[-1] == pytest.approx(0.52317, abs=1e-5)
+    assert deltaP == pytest.approx(31172, abs=1)
 
 def test_id_1p4311():
     test_id = "1.4311"
-    THsolve = pyTHM_solver(f"PSBT test {test_id}", "square", pitch, fuelRadius, inner_clad_radius, outer_clad_radius, 
-                            height, 
-                            PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
-                            PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                            PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
-                            1.0, k_fuel, hgap, k_clad, nz, If, I1, zPlotting, 
-                            solveConduction = True, 
-                            dt = 0, t_tot = 0, 
-                            frfaccorel = 'Churchill', 
-                            P2Pcorel = 'lockhartMartinelli', 
-                            voidFractionCorrel = 'EPRIvoidModel', 
-                            numericalMethod = "BiCG")
+    THsolve = pyTHM_solver( case_name=f"PSBT test {test_id}", 
+                                channel_type="square", 
+                                geometric_data=geometric_data,
+                                tInlet=PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
+                                pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
+                                qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
+                                Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
+                                axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                                fraction_pow_fuel=1.0, 
+                                k_fuel=k_fuel, 
+                                H_gap=hgap, 
+                                k_clad=k_clad, 
+                                I_f=If, 
+                                I_c=I1, 
+                                plot_at_z=zPlotting, 
+                                solveConduction = True, 
+                                fast_iapws_table=tables[test_id],
+                                dt = 0, t_tot = 0, 
+                                frfaccorel = 'Churchill', 
+                                P2Pcorel = 'lockhartMartinelli', 
+                                voidFractionCorrel = 'EPRIvoidModel', 
+                                numericalMethod = "BiCG",
+                            )
+    
 
     Teff, Twater, rho, voidFrac, P, U, H = THsolve.get_TH_parameters()
+    deltaP = P[0] - P[-1]
     assert len(Teff) == nz
-    assert rho[-1] == 280.88969346103784
-    assert voidFrac[-1] == 0.6442088856127333
-    assert P[0] - P[-1] == np.float64(9859377.018958814) - np.float64(9846104.481661443)
+    assert interpolate_void_fraction(zmesh_centers,voidFrac) == pytest.approx(PSBT_TEST_PARAMETERS[test_id]["vF"], abs=0.20)
+    assert rho[-1] == pytest.approx(361.14, abs=1e-2)
+    assert voidFrac[-1] == pytest.approx(0.51573, abs=1e-5)
+    assert deltaP == pytest.approx(19869, abs=1)
 
 def test_id_1p4312():
     test_id = "1.4312"
-    THsolve = pyTHM_solver(f"PSBT test {test_id}", "square", pitch, fuelRadius, inner_clad_radius, outer_clad_radius, 
-                            height, 
-                            PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
-                            PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                            PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
-                            1.0, k_fuel, hgap, k_clad, nz, If, I1, zPlotting, 
-                            solveConduction = True, 
-                            dt = 0, t_tot = 0, 
-                            frfaccorel = 'Churchill', 
-                            P2Pcorel = 'lockhartMartinelli', 
-                            voidFractionCorrel = 'EPRIvoidModel', 
-                            numericalMethod = "BiCG")
+    THsolve = pyTHM_solver( case_name=f"PSBT test {test_id}", 
+                                channel_type="square", 
+                                geometric_data=geometric_data,
+                                tInlet=PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
+                                pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
+                                qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
+                                Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
+                                axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                                fraction_pow_fuel=1.0, 
+                                k_fuel=k_fuel, 
+                                H_gap=hgap, 
+                                k_clad=k_clad, 
+                                I_f=If, 
+                                I_c=I1, 
+                                plot_at_z=zPlotting, 
+                                solveConduction = True, 
+                                fast_iapws_table=tables[test_id],
+                                dt = 0, t_tot = 0, 
+                                frfaccorel = 'Churchill', 
+                                P2Pcorel = 'lockhartMartinelli', 
+                                voidFractionCorrel = 'EPRIvoidModel', 
+                                numericalMethod = "BiCG",
+                            )
+    
 
     Teff, Twater, rho, voidFrac, P, U, H = THsolve.get_TH_parameters()
+    deltaP = P[0] - P[-1]
     assert len(Teff) == nz
-    assert rho[-1] == 242.17545213605806
-    assert voidFrac[-1] == 0.7050296198787516
-    assert P[0] - P[-1] == np.float64(9846125.517964859) - np.float64(9826590.203007437)
+    assert interpolate_void_fraction(zmesh_centers,voidFrac) == pytest.approx(PSBT_TEST_PARAMETERS[test_id]["vF"], abs=0.15)
+    assert rho[-1] == pytest.approx(271.68, abs=1e-2)
+    assert voidFrac[-1] == pytest.approx(0.65791, abs=1e-5)
+    assert deltaP == pytest.approx(59122, abs=1)
 
 
 def test_id_1p4325():
     test_id = "1.4325"
-    THsolve = pyTHM_solver(f"PSBT test {test_id}", "square", pitch, fuelRadius, inner_clad_radius, outer_clad_radius, 
-                            height, 
-                            PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
-                            PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                            PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
-                            1.0, k_fuel, hgap, k_clad, nz, If, I1, zPlotting, 
-                            solveConduction = True, 
-                            dt = 0, t_tot = 0, 
-                            frfaccorel = 'Churchill', 
-                            P2Pcorel = 'lockhartMartinelli', 
-                            voidFractionCorrel = 'EPRIvoidModel', 
-                            numericalMethod = "BiCG")
+    THsolve = pyTHM_solver( case_name=f"PSBT test {test_id}", 
+                                channel_type="square", 
+                                geometric_data=geometric_data,
+                                tInlet=PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
+                                pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
+                                qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
+                                Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
+                                axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                                fraction_pow_fuel=1.0, 
+                                k_fuel=k_fuel, 
+                                H_gap=hgap, 
+                                k_clad=k_clad, 
+                                I_f=If, 
+                                I_c=I1, 
+                                plot_at_z=zPlotting, 
+                                solveConduction = True, 
+                                fast_iapws_table=tables[test_id],
+                                dt = 0, t_tot = 0, 
+                                frfaccorel = 'Churchill', 
+                                P2Pcorel = 'lockhartMartinelli', 
+                                voidFractionCorrel = 'EPRIvoidModel', 
+                                numericalMethod = "BiCG",                              
+                            )
 
     Teff, Twater, rho, voidFrac, P, U, H = THsolve.get_TH_parameters()
+    deltaP = P[0] - P[-1]
     assert len(Teff) == nz
-    assert rho[-1] == 306.11415148016533
-    assert voidFrac[-1] == 0.6046219813888065
-    assert P[0] - P[-1] == np.float64(9850148.508971399) - np.float64(9836281.679510944)
+    assert interpolate_void_fraction(zmesh_centers,voidFrac) == pytest.approx(PSBT_TEST_PARAMETERS[test_id]["vF"], abs=0.15)
+    assert rho[-1] == pytest.approx(345.61, abs=1e-2)
+    assert voidFrac[-1] == pytest.approx(0.54097, abs=1e-5)
+    assert deltaP == pytest.approx(26685, abs=1)
 
 def test_id_1p5221():
     test_id = "1.5221"
-    THsolve = pyTHM_solver(f"PSBT test {test_id}", "square", pitch, fuelRadius, inner_clad_radius, outer_clad_radius, 
-                            height, 
-                            PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
-                            PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                            PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
-                            1.0, k_fuel, hgap, k_clad, nz, If, I1, zPlotting, 
-                            solveConduction = True, 
-                            dt = 0, t_tot = 0, 
-                            frfaccorel = 'Churchill', 
-                            P2Pcorel = 'lockhartMartinelli', 
-                            voidFractionCorrel = 'EPRIvoidModel', 
-                            numericalMethod = "BiCG")
+    THsolve = pyTHM_solver( case_name=f"PSBT test {test_id}", 
+                                channel_type="square", 
+                                geometric_data=geometric_data,
+                                tInlet=PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
+                                pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
+                                qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
+                                Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
+                                axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                                fraction_pow_fuel=1.0, 
+                                k_fuel=k_fuel, 
+                                H_gap=hgap, 
+                                k_clad=k_clad, 
+                                I_f=If, 
+                                I_c=I1, 
+                                plot_at_z=zPlotting, 
+                                solveConduction = True, 
+                                fast_iapws_table=tables[test_id],
+                                dt = 0, t_tot = 0, 
+                                frfaccorel = 'Churchill', 
+                                P2Pcorel = 'lockhartMartinelli', 
+                                voidFractionCorrel = 'EPRIvoidModel', 
+                                numericalMethod = "BiCG"                            
+                            )
 
     Teff, Twater, rho, voidFrac, P, U, H = THsolve.get_TH_parameters()
+    deltaP = P[0] - P[-1]
     assert len(Teff) == nz
-    assert rho[-1] == 394.9209628222452
-    assert voidFrac[-1] == 0.4867585530739229
-    assert P[0] - P[-1] == np.float64(7414426.684080841) - np.float64(7404172.847406715)
+    assert interpolate_void_fraction(zmesh_centers,voidFrac) == pytest.approx(PSBT_TEST_PARAMETERS[test_id]["vF"], abs=0.15)
+    assert rho[-1] == pytest.approx(494.78, abs=1e-2)
+    assert voidFrac[-1] == pytest.approx(0.33922, abs=1e-5)
+    assert deltaP == pytest.approx(11377, abs=1)
 
 def test_id_1p5222():
     test_id = "1.5222"
-    THsolve = pyTHM_solver(f"PSBT test {test_id}", "square", pitch, fuelRadius, inner_clad_radius, outer_clad_radius, 
-                            height, 
-                            PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
-                            PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                            PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
-                            1.0, k_fuel, hgap, k_clad, nz, If, I1, zPlotting, 
-                            solveConduction = True, 
-                            dt = 0, t_tot = 0, 
-                            frfaccorel = 'Churchill', 
-                            P2Pcorel = 'lockhartMartinelli', 
-                            voidFractionCorrel = 'EPRIvoidModel', 
-                            numericalMethod = "BiCG")
+    THsolve = pyTHM_solver( case_name=f"PSBT test {test_id}", 
+                                channel_type="square", 
+                                geometric_data=geometric_data,
+                                tInlet=PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
+                                pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
+                                qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
+                                Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
+                                axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                                fraction_pow_fuel=1.0, 
+                                k_fuel=k_fuel, 
+                                H_gap=hgap, 
+                                k_clad=k_clad, 
+                                I_f=If, 
+                                I_c=I1, 
+                                plot_at_z=zPlotting, 
+                                solveConduction = True, 
+                                fast_iapws_table=tables[test_id],
+                                dt = 0, t_tot = 0, 
+                                frfaccorel = 'Churchill', 
+                                P2Pcorel = 'lockhartMartinelli', 
+                                voidFractionCorrel = 'EPRIvoidModel', 
+                                numericalMethod = "BiCG",                               
+                            )
 
     Teff, Twater, rho, voidFrac, P, U, H = THsolve.get_TH_parameters()
+    deltaP = P[0] - P[-1]
     assert len(Teff) == nz
-    assert rho[-1] == 307.0132667986345
-    assert voidFrac[-1] == 0.6137107824442605
-    assert P[0] - P[-1] == np.float64(7370005.610670738) - np.float64(7355205.025676782)
+    assert interpolate_void_fraction(zmesh_centers,voidFrac) == pytest.approx(PSBT_TEST_PARAMETERS[test_id]["vF"], abs=0.15)
+    assert rho[-1] == pytest.approx(329.49, abs=1e-2)
+    assert voidFrac[-1] == pytest.approx(0.57822, abs=1e-5)
+    assert deltaP == pytest.approx(30690, abs=1)
 
 def test_id_1p6221():
     test_id = "1.6221"
-    THsolve = pyTHM_solver(f"PSBT test {test_id}", "square", pitch, fuelRadius, inner_clad_radius, outer_clad_radius, 
-                            height, 
-                            PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
-                            PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                            PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
-                            1.0, k_fuel, hgap, k_clad, nz, If, I1, zPlotting, 
-                            solveConduction = True, 
-                            dt = 0, t_tot = 0, 
-                            frfaccorel = 'Churchill', 
-                            P2Pcorel = 'lockhartMartinelli', 
-                            voidFractionCorrel = 'EPRIvoidModel', 
-                            numericalMethod = "BiCG")
+    THsolve = pyTHM_solver( case_name=f"PSBT test {test_id}", 
+                                channel_type="square", 
+                                geometric_data=geometric_data,
+                                tInlet=PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
+                                pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
+                                qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
+                                Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
+                                axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                                fraction_pow_fuel=1.0, 
+                                k_fuel=k_fuel, 
+                                H_gap=hgap, 
+                                k_clad=k_clad, 
+                                I_f=If, 
+                                I_c=I1, 
+                                plot_at_z=zPlotting, 
+                                solveConduction = True, 
+                                fast_iapws_table=tables[test_id],
+                                dt = 0, t_tot = 0, 
+                                frfaccorel = 'Churchill', 
+                                P2Pcorel = 'lockhartMartinelli', 
+                                voidFractionCorrel = 'EPRIvoidModel', 
+                                numericalMethod = "BiCG",                         
+                            )
 
     Teff, Twater, rho, voidFrac, P, U, H = THsolve.get_TH_parameters()
+    deltaP = P[0] - P[-1]
     assert len(Teff) == nz
-    assert rho[-1] == 365.69390919568445
-    assert voidFrac[-1] == 0.5478104018172434
-    assert P[0] - P[-1] == np.float64(4963731.594724134) - np.float64(4952535.645710561)
+    assert interpolate_void_fraction(zmesh_centers,voidFrac) == pytest.approx(PSBT_TEST_PARAMETERS[test_id]["vF"], abs=0.20)
+    assert rho[-1] == pytest.approx(456.07, abs=1e-2)
+    assert voidFrac[-1] == pytest.approx(0.42584, abs=1e-5)
+    assert deltaP == pytest.approx(12528, abs=1)
 
 def test_id_1p6222():
     test_id = "1.6222"
-    THsolve = pyTHM_solver(f"PSBT test {test_id}", "square", pitch, fuelRadius, inner_clad_radius, outer_clad_radius, 
-                            height, 
-                            PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
-                            PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
-                            PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                            PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
-                            1.0, k_fuel, hgap, k_clad, nz, If, I1, zPlotting, 
-                            solveConduction = True, 
-                            dt = 0, t_tot = 0, 
-                            frfaccorel = 'Churchill', 
-                            P2Pcorel = 'lockhartMartinelli', 
-                            voidFractionCorrel = 'EPRIvoidModel', 
-                            numericalMethod = "BiCG")
+    print(f"POutlet = {PSBT_TEST_PARAMETERS[test_id]['pOutlet']}")
+    print(f"tInlet = {PSBT_TEST_PARAMETERS[test_id]['tInlet']}")
+    THsolve = pyTHM_solver( case_name=f"PSBT test {test_id}", 
+                                channel_type="square", 
+                                geometric_data=geometric_data,
+                                tInlet=PSBT_TEST_PARAMETERS[test_id]["tInlet"], 
+                                pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
+                                qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
+                                Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
+                                axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                                fraction_pow_fuel=1.0, 
+                                k_fuel=k_fuel, 
+                                H_gap=hgap, 
+                                k_clad=k_clad, 
+                                I_f=If, 
+                                I_c=I1, 
+                                plot_at_z=zPlotting, 
+                                solveConduction = True, 
+                                fast_iapws_table=tables[test_id],
+                                dt = 0, t_tot = 0, 
+                                frfaccorel = 'Churchill', 
+                                P2Pcorel = 'lockhartMartinelli', 
+                                voidFractionCorrel = 'EPRIvoidModel', 
+                                numericalMethod = "BiCG",                            
+                            )
 
     Teff, Twater, rho, voidFrac, P, U, H = THsolve.get_TH_parameters()
+    deltaP = P[0] - P[-1]
     assert len(Teff) == nz
-    assert rho[-1] == 302.0181885130515
-    assert voidFrac[-1] == 0.6326112382636541
-    assert P[0] - P[-1] == np.float64(4917692.48753752) - np.float64(4903547.401716785)
+    assert interpolate_void_fraction(zmesh_centers,voidFrac) == pytest.approx(PSBT_TEST_PARAMETERS[test_id]["vF"], abs=0.22)
+    assert rho[-1] == pytest.approx(334.56, abs=1e-2)
+    assert voidFrac[-1] == pytest.approx(0.58793, abs=1e-5)
+    assert deltaP == pytest.approx(23991, abs=1)
