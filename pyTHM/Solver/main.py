@@ -17,7 +17,7 @@ import re
 class pyTHM_solver:
     def __init__(self, case_name, channel_type, geometric_data, tInlet, pOutlet, qFlow, Powtot, axial_p_form, fraction_pow_fuel,
                  k_fuel, H_gap, k_clad, I_f, I_c,
-                 water_rod = False, 
+                 water_rod = False, water_rod_holes = False,
                  plot_at_z=[], solveConduction=False, fast_iapws_table=None,
                  dt=0, t_tot=0, frfaccorel = 'base', P2Pcorel = 'base', voidFractionCorrel = 'GEramp', numericalMethod= 'FVM'):
         """
@@ -43,6 +43,8 @@ class pyTHM_solver:
         - k_clad: Thermal conductivity of the clad (W/m/K).
         - I_f: Number of mesh elements in the fuel.
         - I_c: Number of mesh elements in the clad.
+        - water_rod: boolean to activate coupled active flow - water rod models.
+        - water_rod_holes: boolean to activate water rod hole models for singular pressure losses.
         - plot_at_z: List of axial positions at which to plot the results.
         - solveConduction: Boolean indicating whether to solve the heat conduction problem in the fuel rod.
         - fast_iapws_table : FastIAPWS project instanced a - priori based on outlet pressure.
@@ -104,10 +106,16 @@ class pyTHM_solver:
             kexp_wr = geometric_data["water_rod_data"]["k_expansion"]
             p_wr = geometric_data["water_rod_data"]["permieters"]
             rwall_wr = geometric_data["water_rod_data"]["thermal_resistances"]
-            Idelchik_enter = geometric_data["water_rod_data"]["Idelchik_enter"]
-            Idelchik_exit = geometric_data["water_rod_data"]["Idelchik_exit"]
-            hole_A = geometric_data["water_rod_data"]["hole_A"]
-            hole_Z = geometric_data["water_rod_data"]["hole_Z"]
+            if water_rod_holes:
+                Idelchik_enter = geometric_data["water_rod_data"]["Idelchik_enter"]
+                Idelchik_exit = geometric_data["water_rod_data"]["Idelchik_exit"]
+                hole_A = geometric_data["water_rod_data"]["hole_A"]
+                hole_Z = geometric_data["water_rod_data"]["hole_Z"]
+            else: 
+                Idelchik_enter = []
+                Idelchik_exit = []
+                hole_A = []
+                hole_Z = []
         else:
             acools_wr = None
             porosities_wr = None

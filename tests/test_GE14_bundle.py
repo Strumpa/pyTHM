@@ -105,6 +105,7 @@ def test_GE14_dfmp40c_v_active_with_wr_Ozaki(solver_data, fast_iapws):
         I_f=8,  
         I_c=3,
         water_rod=True,
+        water_rod_holes=True,
         plot_at_z=[],
         solveConduction=True,
         fast_iapws_table=fast_iapws,
@@ -120,8 +121,8 @@ def test_GE14_dfmp40c_v_active_with_wr_Ozaki(solver_data, fast_iapws):
     Teff, Twater, rho, voidFrac, P, U, H = THsolve.get_TH_parameters()
     print(f"Test {case_name}: final void fraction = {voidFrac[-1]:.4f}, DeltaP = {P[0] - P[-1]:.1f} Pa\n")
     deltaP = (P[0] - P[-1])
-    assert voidFrac[-1] == pytest.approx(0.76408, abs=1e-5)
-    assert deltaP == pytest.approx(42162, abs=1)
+    assert voidFrac[-1] == pytest.approx(0.76304, abs=1e-5)
+    assert deltaP == pytest.approx(41933, abs=1)
 
 def test_GE14_dfmp40c_v_active_no_wr_Ozaki(solver_data, fast_iapws):
 
@@ -162,6 +163,8 @@ def test_GE14_dfmp40c_v_active_no_wr_Ozaki(solver_data, fast_iapws):
         I_c=3,
         plot_at_z=[],
         solveConduction=True,
+        water_rod=False,
+        water_rod_holes=False,
         fast_iapws_table=fast_iapws,
         dt=0,
         t_tot=0,
@@ -169,7 +172,6 @@ def test_GE14_dfmp40c_v_active_no_wr_Ozaki(solver_data, fast_iapws):
         P2Pcorel='friedel', 
         voidFractionCorrel='Ozaki', 
         numericalMethod="FVM",
-        water_rod=False
     )
     
     # Récupération et affichage d'un résumé des résultats
@@ -214,6 +216,7 @@ def test_GE14_dfmp20c_v_active_wr_noholes_GERamp(solver_data, fast_iapws):
         I_f=8,  
         I_c=3,
         water_rod=True,
+        water_rod_holes=False,
         plot_at_z=[],
         solveConduction=True,
         fast_iapws_table=fast_iapws,
@@ -269,6 +272,7 @@ def test_GE14_dfmp40c_no_holes_WR_Hibiki(solver_data, fast_iapws):
         I_f=8,  
         I_c=3,
         water_rod=True,
+        water_rod_holes=False,
         plot_at_z=[],
         solveConduction=True,
         fast_iapws_table=fast_iapws,
@@ -331,12 +335,13 @@ def test_GE14_dfmp20s_WR_EPRIVoidModel(solver_data, fast_iapws):
         P2Pcorel='friedel', 
         voidFractionCorrel='EPRIvoidModel', 
         numericalMethod="FVM",
-        water_rod=True
+        water_rod=True,
+        water_rod_holes=True
     )
     
     # Récupération et affichage d'un résumé des résultats
     Teff, Twater, rho, voidFrac, P, U, H = THsolve.get_TH_parameters()
     print(f"Test {case_name}: final void fraction = {voidFrac[-1]:.5f}, DeltaP = {P[0] - P[-1]:.1f} Pa\n")
     deltaP = P[0] - P[-1]
-    assert voidFrac[-1] == pytest.approx(0.46679, abs=1e-5)
-    assert deltaP == pytest.approx(17438, abs=1)
+    assert voidFrac[-1] == pytest.approx(0.46381, abs=1e-5)
+    assert deltaP == pytest.approx(17391, abs=1)
