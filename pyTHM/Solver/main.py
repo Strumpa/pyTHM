@@ -189,7 +189,7 @@ class pyTHM_solver:
                 qFlow_wr = alpha * qFlow
                 qFlow_actif = (1 - alpha) * qFlow
                 
-                print(f"\n--- Sécante {secant_iter} : alpha = {alpha:.4f} (WR: {qFlow_wr:.2f} kg/s, Actif: {qFlow_actif:.2f} kg/s) ---")
+                print(f"\n--- Sécante {secant_iter} : alpha = {alpha:.4f} (WR: {qFlow_wr:.2f} kg/s, Active: {qFlow_actif:.2f} kg/s) ---")
 
                 v_lat_prev = np.zeros(len(hole_z_indices))
                 v_lat_prev_prev = np.zeros(len(hole_z_indices))
@@ -230,7 +230,7 @@ class pyTHM_solver:
                         error_v_lat = 0.0
 
                     if error_v_lat < 1e-2:
-                        print(f"    Ping-Pong convergé en {ping_pong + 1} itérations (Erreur max: {error_v_lat:.4f} m/s)")
+                        print(f"    Ping-Pong converged in {ping_pong + 1} iterations (max error: {error_v_lat:.4f} m/s)")
                         break
                     
                     print(f"    Ping-Pong iter {ping_pong+1}: error = {error_v_lat:.4f} m/s, omega_dyn = {omega_dyn:.3f}, v_lat_new = {v_lat_new}")
@@ -282,7 +282,7 @@ class pyTHM_solver:
                 
                 delta_P = P_plenum_actif - P_plenum_wr
                 
-                print(f"Active flow plenum Pressure : {P_plenum_actif:.0f} Pa | Water Rod plenum pressure: {P_plenum_wr:.0f} Pa | Difference: {delta_P:.1f} Pa")           
+                print(f"Active flow plenum pressure : {P_plenum_actif:.0f} Pa | Water Rod plenum pressure: {P_plenum_wr:.0f} Pa | Difference: {delta_P:.1f} Pa")           
 
                 if abs(delta_P) < 500.0:
                     print(">>> Reached convergence on inlet mass flow rate (alpha) !")
@@ -307,7 +307,7 @@ class pyTHM_solver:
             self.alpha_final = alpha
         else:
             # --- SIMPLE RESOLUTION (WITHOUT WATER ROD) ---
-            print("\n--- Résolution sans Water Rod (channel actif seul) ---")
+            print("\n--- Solving without Water Rod model (active coolant flow only) ---")
             qFlow_actif = self.qFlow # 100% of the flow goes to the active channel
             
             # No lateral exchange, therefore sources = 0

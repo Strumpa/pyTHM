@@ -27,19 +27,19 @@ def test_PATHS_expansion(fast_iapws):
     # ==========================================
 
     # ==========================================
-    # Configuration amont / aval selon le cas
+    # Case configuration
     # ==========================================
-    # Le fluide passe de étroit à large
+    # Expansion case : from narrow to wide
     acools = np.array([A_narrow] * 20 + [A_wide] * 8)
-    A_amont = A_narrow
-    A_aval = A_wide
+    A_upstream = A_narrow
+    A_downstream = A_wide
     
-    # Borda-Carnot corrigé pour être calibré sur la vitesse AVAL
-    # Formule classique (sur amont) : (1 - A_amont/A_aval)^2
-    # Correction pour aval : on multiplie par (A_aval/A_amont)^2
-    K_internal = (A_aval / A_amont - 1.0)**2
+    # Corrected Borda-Carnot for downstream velocity
+    # Classical upstream formula : (1 - A_upstream/A_downstream)^2
+    # Downstream formula : multiply by (A_downstream/A_upstream)^2
+    K_internal = (A_downstream / A_upstream - 1.0)**2
     
-    rsin_val = A_amont / A_aval
+    rsin_val = A_upstream / A_downstream
 
     dhs = np.sqrt(4 * acools / np.pi)
     phs = np.ones(I_z)
@@ -62,7 +62,7 @@ def test_PATHS_expansion(fast_iapws):
     geometric_data["active_flow_data"]["heated_perimeters"] = phs
     geometric_data["active_flow_data"]["pitch"] = 0.000
 
-    # Dictionnaire des tests K
+    # K tests disctionary setup
     k_tests = {
         'K=0': 0.0, 
         'internal=yes': K_internal, 
@@ -72,14 +72,14 @@ def test_PATHS_expansion(fast_iapws):
     results = {}
 
     # ==========================================
-    # Boucle de résolution
+    # Iterate over cases
     # ==========================================
     for name, K_val in k_tests.items():
         kexp_profile = np.zeros(I_z + 1)
         kcon_profile = np.zeros(I_z + 1)
         rsin_profile = np.ones(I_z + 1)
 
-        # La face de saut est à l'index 20
+        # Jump face at index 20
         kexp_profile[20] = K_val
         rsin_profile[20] = rsin_val
 
@@ -110,7 +110,7 @@ def test_PATHS_expansion(fast_iapws):
             numericalMethod="FVM"
         )
 
-        # Extraction de la perte de charge totale
+        # Compute pressure drop
         P_array = THsolve.convection_sol.P[-1]
         Delta_P = P_array[0] - P_array[-1]
         results[name] = Delta_P
@@ -132,26 +132,26 @@ def test_PATHS_contraction(fast_iapws):
 
 
     # ==========================================
-    # Configuration amont / aval selon le cas
+    # Case configuration
     # ==========================================
-    # Le fluide passe de large à étroit
+    # Flow from wide to narrow 
     acools = np.array([A_wide] * 20 + [A_narrow] * 8)
-    A_amont = A_wide
-    A_aval = A_narrow
+    A_upstream = A_wide
+    A_downstream = A_narrow
     
-    # Formule de l'image (Sudden Contraction)
-    # d^2 / D^2 correspond exactement au ratio des aires (A_aval / A_amont)
-    d_D_ratio = np.sqrt(A_aval / A_amont)
-    A_ratio = A_aval / A_amont
+    # Sudden Contraction formula
+    # d^2 / D^2 (A_downstream / A_upstream) ratio
+    d_D_ratio = np.sqrt(A_downstream / A_upstream)
+    A_ratio = A_downstream / A_upstream
     
     if d_D_ratio <= 0.76:
         K_internal = 0.42 * (1.0 - A_ratio)
     else:
         K_internal = (1.0 - A_ratio)**2
         
-    # Le K_internal est natif sur la vitesse de la section aval (étroite).
-    # Il n'y a pas de correction de vitesse à ajouter pour le solveur.
-    rsin_val = A_aval / A_amont
+    # K_internal does not need to be corrected
+
+    rsin_val = A_downstream / A_upstream
 
     dhs = np.sqrt(4 * acools / np.pi)
     phs = np.ones(I_z)
@@ -174,7 +174,7 @@ def test_PATHS_contraction(fast_iapws):
     geometric_data["active_flow_data"]["heated_perimeters"] = phs
     geometric_data["active_flow_data"]["pitch"] = 0.000
 
-    # Dictionnaire des tests K
+    # Test cases on K
     k_tests = {
         'K=0': 0.0, 
         'internal=yes': K_internal, 
@@ -184,14 +184,14 @@ def test_PATHS_contraction(fast_iapws):
     results = {}
 
     # ==========================================
-    # Boucle de résolution
+    # Iterate over tests
     # ==========================================
     for name, K_val in k_tests.items():
         kexp_profile = np.zeros(I_z + 1)
         kcon_profile = np.zeros(I_z + 1)
         rsin_profile = np.ones(I_z + 1)
 
-        # La face de saut est à l'index 20
+        # Jumo face at index 20
         kcon_profile[20] = K_val
         rsin_profile[20] = rsin_val
 
@@ -222,7 +222,7 @@ def test_PATHS_contraction(fast_iapws):
             numericalMethod="FVM",
         )
 
-        # Extraction de la perte de charge totale
+        # Compute pressure drop
         P_array = THsolve.convection_sol.P[-1]
         Delta_P = P_array[0] - P_array[-1]
         results[name] = Delta_P

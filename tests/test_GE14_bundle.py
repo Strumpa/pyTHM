@@ -46,11 +46,11 @@ def solver_data():
     if not os.path.exists(yaml_path):
         raise FileNotFoundError(f"Input geometry YAML file {yaml_path} not found.")
     
-    # 1. Séparer le dossier et le nom du fichier
+    # 1. Split folder and file name
     path_to_configs = os.path.dirname(yaml_path)
     core_desc_file = os.path.basename(yaml_path)
     
-    # 2. Instancier le modèle du cœur
+    # 2. Initiate core model
     core_model = CoreModel(
         name="GE14_FUEL_BUNDLE", 
         path_to_yaml_configs=path_to_configs, 

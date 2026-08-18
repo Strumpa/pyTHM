@@ -24,7 +24,7 @@ from pyTHM.WaterProperties.waterProperties import FastIAPWS
 import cProfile
 
 class DFMclass():
-    def __init__(self, canal_type, nCells, tInlet, qFlow, pOutlet, height, fuelRadius, cladRadius, pin_pitch, pitch,  numericalMethod, frfaccorel, P2P2corel, voidFractionCorrel, FAST_IAPWS, dt = 0, t_tot = 0, D_h = 0, volumetricArea = 0, porosities=None, acools=None, dhs=None, phs=None, kexp=None, kcon=None, rsin=None):
+    def __init__(self, channel_type, nCells, tInlet, qFlow, pOutlet, height, fuelRadius, cladRadius, pin_pitch, pitch,  numericalMethod, frfaccorel, P2P2corel, voidFractionCorrel, FAST_IAPWS, dt = 0, t_tot = 0, D_h = 0, volumetricArea = 0, porosities=None, acools=None, dhs=None, phs=None, kexp=None, kcon=None, rsin=None):
         
         """
         Attributes:
@@ -34,7 +34,7 @@ class DFMclass():
         - height (m), fuelRadius (m), cladRadius (m): Geometry of the channel (length, fuel, and clad radii).
         - pin_pitch: Distance between fuel pins in the assembly (m).
         - pitch: Channel width or distance, depending on the geometry.
-        - canalType: Geometry type of the channel, either 'square' or 'cylindrical'.
+        - channel_type: Geometry type of the channel, either 'square' or 'cylindrical'.
         - numericalMethod: Chosen method for numerical resolution (e.g., Gauss-Seidel, FVM, BiGStab).
         - voidFractionCorrel, frfaccorel, P2Pcorel: Correlations used for void fraction and other flow properties.
         - FAST_IAPWS : FastIAPWS object with thermo-physical quantities pre-tabulated.
@@ -98,7 +98,7 @@ class DFMclass():
         self.pitch = pitch
         self.wall_dist = pitch
         self.pin_pitch = pin_pitch
-        self.canalType = canal_type
+        self.channelType = channel_type
 
         #Porous media parameters
         self.poro = np.zeros(self.nFaces)
@@ -121,7 +121,7 @@ class DFMclass():
         self.D_h[self.nCells] = dhs[-1]
         self.phs[self.nCells] = phs[-1]
 
-        #calculate temporary uInlet
+        #compute temporary uInlet
         self.qFlow = qFlow #kg/s
         self.rhoInlet = IAPWS97(T = self.tInlet, P = falsePInlet*10**(-6)).rho #kg/m3
         self.uInlet = self.qFlow / (self.areaMatrix[0] * self.rhoInlet) #m/s
