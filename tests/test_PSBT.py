@@ -20,42 +20,6 @@ def get_z_mesh(h, nz):
     z_values = (z_boundaries[:-1] + z_boundaries[1:]) / 2  # Midpoints of control volumes
     return z_values, z_boundaries
 
-def get_axial_p_form(nz, height, shape):
-    """
-    Parameters:
-    nz (int): Number of axial mesh points.
-    height (float): Height of the fuel pin in cm.
-    shape (str): Shape of the axial power distribution, can be "sine", "cosine", or "flat".
-    """
-    if shape == "sine":
-        """
-        get sine values over a mesh of nz points along the height h.
-        """
-        # Compute the boundaries and midpoints of each control volume
-        z_boundaries = np.linspace(0, height, nz + 1)
-        z_values = (z_boundaries[:-1] + z_boundaries[1:]) / 2  # Midpoints of control volumes
-        # Compute sine values at each midpoint
-        p_form_values = np.sin(np.pi * z_values / height) / np.mean(np.sin(np.pi * z_values / height))  # Normalize to have a mean of 1
-
-    elif shape == "cosine":
-        """
-        get cosine values over a mesh of nz points along the height h.
-        """
-        # Compute the boundaries and midpoints of each control volume
-        z_boundaries = np.linspace(0, height, nz + 1)
-        z_values = (z_boundaries[:-1] + z_boundaries[1:]) / 2  # Midpoints of control volumes
-        # Compute cosine values at each midpoint
-        p_form_values = np.cos(np.pi * z_values / (2 * height)) / np.mean(np.cos(np.pi * z_values / (2 * height)))  # Normalize to have a mean of 1
-    
-    elif shape == "flat":
-        """
-        get flat values over a mesh of nz points along the height h.
-        """
-        p_form_values = np.ones(nz)
-    else:
-        raise ValueError("Shape must be 'sine', 'cosine', or 'flat'.")
-    return p_form_values
-
 def interpolate_void_fraction(zmesh, voidfractions):
     PSBT_measurement_height = 1.40
     vf_at_140cm = np.interp(PSBT_measurement_height, zmesh, voidfractions)
@@ -120,7 +84,6 @@ zPlotting = [] #If empty, no plotting of the axial distribution of the fields, o
 If = 8
 I1 = 3
 height = 1.555  # in meters (converted from 155.5 cm)
-shape = "flat"
 pitch = 0.0126  # in meters (converted from 1.26 cm)
 fuelRadius = 0.0027115493728018247  # in meters
 inner_clad_radius = fuelRadius + 0.0000001  # in meters
@@ -140,7 +103,7 @@ for i in range(len(test_id_numbers)):
     test_id = str(test_id_numbers[i]) # Test ID number
     print(f"PSBT test ID = {test_id}")
     PSBT_TEST_PARAMETERS[test_id] = {}
-    PSBT_TEST_PARAMETERS[test_id]["axial_p_form"] = get_axial_p_form(nz, height, shape)
+    PSBT_TEST_PARAMETERS[test_id]["power_shape"] = "uniform" # All tests have uniform power distribution
     PSBT_TEST_PARAMETERS[test_id]["pOutlet"] = pressureList[i] * 98066.5 # Pa (convert kg/cm2a to Pa)
     print(f"Pressure={pressureList[i] * 98066.5} MPa")
     pressures.append(pressureList[i] * 98066.5)
@@ -184,7 +147,7 @@ def test_id_1p1222():
                             pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
                             qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
                             Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                            axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                            power_distribution=PSBT_TEST_PARAMETERS[test_id]["power_shape"], 
                             fraction_pow_fuel=1.0, 
                             k_fuel=k_fuel, 
                             H_gap=hgap, 
@@ -217,7 +180,7 @@ def test_id_1p1223():
                                 pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
                                 qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
                                 Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                                axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                                power_distribution=PSBT_TEST_PARAMETERS[test_id]["power_shape"], 
                                 fraction_pow_fuel=1.0, 
                                 k_fuel=k_fuel, 
                                 H_gap=hgap, 
@@ -252,7 +215,7 @@ def test_id_1p2211():
                                 pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
                                 qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
                                 Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                                axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                                power_distribution=PSBT_TEST_PARAMETERS[test_id]["power_shape"], 
                                 fraction_pow_fuel=1.0, 
                                 k_fuel=k_fuel, 
                                 H_gap=hgap, 
@@ -287,7 +250,7 @@ def test_id_1p2221():
                                 pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
                                 qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
                                 Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                                axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                                power_distribution=PSBT_TEST_PARAMETERS[test_id]["power_shape"], 
                                 fraction_pow_fuel=1.0, 
                                 k_fuel=k_fuel, 
                                 H_gap=hgap, 
@@ -322,7 +285,7 @@ def test_id_1p2223():
                                 pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
                                 qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
                                 Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                                axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                                power_distribution=PSBT_TEST_PARAMETERS[test_id]["power_shape"], 
                                 fraction_pow_fuel=1.0, 
                                 k_fuel=k_fuel, 
                                 H_gap=hgap, 
@@ -357,7 +320,7 @@ def test_id_1p2237():
                                 pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
                                 qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
                                 Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                                axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                                power_distribution=PSBT_TEST_PARAMETERS[test_id]["power_shape"], 
                                 fraction_pow_fuel=1.0, 
                                 k_fuel=k_fuel, 
                                 H_gap=hgap, 
@@ -392,7 +355,7 @@ def test_id_1p2422():
                                 pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
                                 qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
                                 Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                                axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                                power_distribution=PSBT_TEST_PARAMETERS[test_id]["power_shape"], 
                                 fraction_pow_fuel=1.0, 
                                 k_fuel=k_fuel, 
                                 H_gap=hgap, 
@@ -427,7 +390,7 @@ def test_id_1p2423():
                                 pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
                                 qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
                                 Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                                axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                                power_distribution=PSBT_TEST_PARAMETERS[test_id]["power_shape"], 
                                 fraction_pow_fuel=1.0, 
                                 k_fuel=k_fuel, 
                                 H_gap=hgap, 
@@ -462,7 +425,7 @@ def test_id_1p4311():
                                 pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
                                 qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
                                 Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                                axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                                power_distribution=PSBT_TEST_PARAMETERS[test_id]["power_shape"], 
                                 fraction_pow_fuel=1.0, 
                                 k_fuel=k_fuel, 
                                 H_gap=hgap, 
@@ -497,7 +460,7 @@ def test_id_1p4312():
                                 pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
                                 qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
                                 Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                                axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                                power_distribution=PSBT_TEST_PARAMETERS[test_id]["power_shape"], 
                                 fraction_pow_fuel=1.0, 
                                 k_fuel=k_fuel, 
                                 H_gap=hgap, 
@@ -533,7 +496,7 @@ def test_id_1p4325():
                                 pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
                                 qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
                                 Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                                axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                                power_distribution=PSBT_TEST_PARAMETERS[test_id]["power_shape"], 
                                 fraction_pow_fuel=1.0, 
                                 k_fuel=k_fuel, 
                                 H_gap=hgap, 
@@ -567,7 +530,7 @@ def test_id_1p5221():
                                 pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
                                 qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
                                 Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                                axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                                power_distribution=PSBT_TEST_PARAMETERS[test_id]["power_shape"], 
                                 fraction_pow_fuel=1.0, 
                                 k_fuel=k_fuel, 
                                 H_gap=hgap, 
@@ -601,7 +564,7 @@ def test_id_1p5222():
                                 pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
                                 qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
                                 Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                                axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                                power_distribution=PSBT_TEST_PARAMETERS[test_id]["power_shape"], 
                                 fraction_pow_fuel=1.0, 
                                 k_fuel=k_fuel, 
                                 H_gap=hgap, 
@@ -635,7 +598,7 @@ def test_id_1p6221():
                                 pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
                                 qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
                                 Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                                axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                                power_distribution=PSBT_TEST_PARAMETERS[test_id]["power_shape"], 
                                 fraction_pow_fuel=1.0, 
                                 k_fuel=k_fuel, 
                                 H_gap=hgap, 
@@ -671,7 +634,7 @@ def test_id_1p6222():
                                 pOutlet=PSBT_TEST_PARAMETERS[test_id]["pOutlet"], 
                                 qFlow=PSBT_TEST_PARAMETERS[test_id]["qFlow"], 
                                 Powtot=PSBT_TEST_PARAMETERS[test_id]["Power"], 
-                                axial_p_form=PSBT_TEST_PARAMETERS[test_id]["axial_p_form"], 
+                                power_distribution=PSBT_TEST_PARAMETERS[test_id]["power_shape"], 
                                 fraction_pow_fuel=1.0, 
                                 k_fuel=k_fuel, 
                                 H_gap=hgap, 

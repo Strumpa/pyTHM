@@ -15,7 +15,7 @@ import os
 import re
 
 class pyTHM_solver:
-    def __init__(self, case_name, channel_type, geometric_data, tInlet, pOutlet, qFlow, Powtot, axial_p_form, fraction_pow_fuel,
+    def __init__(self, case_name, channel_type, geometric_data, tInlet, pOutlet, qFlow, Powtot, power_distribution, fraction_pow_fuel,
                  k_fuel, H_gap, k_clad, I_f, I_c,
                  water_rod = False, water_rod_holes = False,
                  plot_at_z=[], solveConduction=False, fast_iapws_table=None,
@@ -35,8 +35,9 @@ class pyTHM_solver:
         - tInlet: Inlet temperature of the coolant (K).
         - pOutlet: Outlet pressure of the coolant (Pa).
         - qFlow: Mass flow rate of the coolant (kg/s).
-        - Powtot: Total power generated in a fuel rod (W).
-        - axial_p_form: Axial power form factor, representing the power distribution along the axial dimension of the fuel rod.
+        - Powtot: Total power generated in the equivalent fuel rod (W).
+        - power_distribution: Power distribution profile along the axial dimension of the fuel rod. 
+             power_distribution :: (str) | (list) | (np.ndarray) : 'cosine', 'sine', 'uniform' or a list/array of length I_z representing the power distribution along the axial dimension of the fuel assembly.
         - fraction_pow_fuel: Fraction of the total power that is deposited in the fuel.
         - k_fuel: Thermal conductivity of the fuel (W/m/K).
         - H_gap: Heat transfer coefficient through the gap (W/m^2/K).
@@ -60,35 +61,35 @@ class pyTHM_solver:
         self.channel_type = channel_type # cylindrical or square, used to determine the cross sectional flow area in the channel and the hydraulic diameter
         self.water_rod = water_rod
 
-        # time atributes to prepare for transient simulations
+        # Time atributes to prepare for transient simulations
         self.t0 = 0
         self.dt = dt
         self.t_end = t_tot
 
         # Power distribution parameters : 
         self.Powtot = Powtot # Total reactor power in W
-        self.axial_pow_form = axial_p_form # axial power form factors, representing the power distribution along the axial dimension of the fuel rod, used to compute the fission power in the fuel rod.
+        self.power_distribution = power_distribution # Power distribution profile along the axial dimension of the fuel rod.
         self.Fpow = fraction_pow_fuel # fraction of the total power that is deposited in the fuel, used to compute the fission power in the fuel rod.
 
-        # thermal solver boundary conditions and thermo-physical data
-        # convection problem
+        # Thermal solver boundary conditions and thermo-physical data
+        # Convection problem
         self.tInlet = tInlet
         self.qFlow = qFlow #  mass flux in kg/s, assumed to be constant along the axial profile.
         self.pOutlet =  pOutlet #Pa
         self.FAST_IAPWS = fast_iapws_table
         self.rhoInlet = self.FAST_IAPWS.get_rhol(self.pOutlet)
-        # conduction problem
+        # Conduction problem
         self.k_fuel = k_fuel # thermal conductivity coefficient in fuel W/m/K
         self.H_gap = H_gap # Heat transfer coefficient through gap W/m^2/K
         self.k_clad = k_clad # thermal conductivity coefficient in clad W/m/K
 
-        # meshing parameters : 
+        # Meshing parameters : 
         self.I_z = geometric_data["active_flow_data"]["number_of_axial_meshes"] # number of mesh elements on axial mesh
         self.I_f = I_f # number of mesh elements in the fuel
         self.I_c = I_c # number of mesh elements in clad
 
         ## Unpack geometric parameters
-        # active coolant channel attributes
+        # Active coolant channel attributes
         porosities = geometric_data["active_flow_data"]["porosities"]
         acools = geometric_data["active_flow_data"]["coolant_cross_sectional_areas"]
         dhs = geometric_data["active_flow_data"]["hydraulic_diamters"]
@@ -98,13 +99,13 @@ class pyTHM_solver:
         rsin_profile =  geometric_data["active_flow_data"]["singular_contraction_ratios"] 
         self.pitch = geometric_data["active_flow_data"]["pitch"]
 
-        # water rod attributes
+        # Water rod attributes
         if water_rod:
             acools_wr = geometric_data["water_rod_data"]["moderator_cross_sectional_areas"]
             porosities_wr = geometric_data["water_rod_data"]["porosities"]
-            dhs_wr = geometric_data["water_rod_data"]["hydraulic_diamters"]
+            dhs_wr = geometric_data["water_rod_data"]["hydraulic_diameters"]
             kexp_wr = geometric_data["water_rod_data"]["k_expansion"]
-            p_wr = geometric_data["water_rod_data"]["permieters"]
+            p_wr = geometric_data["water_rod_data"]["perimeters"]
             rwall_wr = geometric_data["water_rod_data"]["thermal_resistances"]
             if water_rod_holes:
                 Idelchik_enter = geometric_data["water_rod_data"]["Idelchik_enter"]
@@ -128,17 +129,21 @@ class pyTHM_solver:
             hole_A = None
             hole_Z = None
         
-        # fuel geometrical parameters
+        # Fuel geometrical parameters
         self.fuel_radius = geometric_data["fuel_data"]["fuel_radius"] # fuel pin radius in meters
         self.gap_radius = geometric_data["fuel_data"]["gap_radius"] # gap radius in meters, used to determine mesh elements for constant surface discretization
         self.clad_radius = geometric_data["fuel_data"]["clad_radius"] # clad radius in meters, used to determine mesh elements for constant surface discretization
         self.pin_pitch = geometric_data["fuel_data"]["pin_pitch"] # distance between the centers of two adjacent fuel rods in meters
         self.fuel_length = geometric_data["fuel_data"]["max_rod_length"]
 
-        # estimate uInlet in the active flow based on mass flow rate, first estimated for rhoInlet and the coolant cross sectional area.
+        # Estimate uInlet in the active flow based on mass flow rate, first estimated for rhoInlet and the coolant cross sectional area.
         self.uInlet = self.qFlow / (self.rhoInlet*acools[0]) #m/s
+        
+        # Initialize the axial power profile based on the specified power distribution
+        self.axial_p_form = self.generate_axial_power_profile()
+        
 
-        # solver options :
+        # Solver options :
         self.frfaccorel = frfaccorel # friction factor correlation
         self.P2Pcorel = P2Pcorel # pressure drop correlation
         self.voidFractionCorrel = voidFractionCorrel # void fraction correlation
@@ -204,7 +209,7 @@ class pyTHM_solver:
                                         frfaccorel, P2Pcorel, voidFractionCorrel, self.FAST_IAPWS,
                                         dt=dt, t_tot=t_tot, porosities=porosities, acools=acools, 
                                         dhs=dhs, phs=phs, kexp=kexp_profile, kcon=kcon_profile, rsin=rsin_profile)
-                    DFM_actif.set_Fission_Power(Powtot, axial_p_form, fraction_pow_fuel)
+                    DFM_actif.set_Fission_Power(Powtot, self.axial_p_form, fraction_pow_fuel)
                     DFM_actif.update_sources(S_mass_a, S_mom_a, S_h_a)
                     DFM_actif.resolveDFM()
 
@@ -216,7 +221,7 @@ class pyTHM_solver:
                                     frfaccorel, P2Pcorel, voidFractionCorrel, self.FAST_IAPWS,
                                     dt=dt, t_tot=t_tot, porosities=porosities_wr, acools=acools_wr, 
                                     dhs=dhs_wr, phs=p_wr, kexp=kexp_wr, kcon=kcon_wr_safe, rsin=rsin_wr_safe)
-                    DFM_wr.set_Fission_Power(0.0, axial_p_form, fraction_pow_fuel)
+                    DFM_wr.set_Fission_Power(0.0, self.axial_p_form, fraction_pow_fuel)
                     DFM_wr.update_sources(S_mass_w, S_mom_w, S_h_w)
                     DFM_wr.resolveDFM()
                     
@@ -319,7 +324,7 @@ class pyTHM_solver:
                                  dt=dt, t_tot=t_tot, porosities=porosities, acools=acools, 
                                  dhs=dhs, phs=phs, kexp=kexp_profile, kcon=kcon_profile, rsin=rsin_profile)
                                  
-            DFM_actif.set_Fission_Power(Powtot, axial_p_form, fraction_pow_fuel)
+            DFM_actif.set_Fission_Power(Powtot, self.axial_p_form, fraction_pow_fuel)
             DFM_actif.update_sources(S_mass_a, S_mom_a, S_h_a)
             DFM_actif.resolveDFM()
             
@@ -345,39 +350,28 @@ class pyTHM_solver:
                 for z_val in self.plot_results:
                     self.plot_Temperature_at_z(z_val)
     
-    def compute_solver_parameters_from_geometry(self):
+    
+    def generate_axial_power_profile(self):
         """
-        From base geometry parameters :
+        Initialize the axial power profile based on self.power_distribution.
+        self.power_distribution :: (str) | (list) | (np.ndarray) : 'cosine', 'sine', 'uniform' or a list/array of length I_z representing the power distribution along the axial dimension of the fuel assembly.
+        """
+        profile = []
+        for i in range(self.I_z):
+            z_norm = (i + 0.5) / self.I_z 
+            if isinstance(self.power_distribution, (list, np.ndarray)) and len(self.power_distribution) == self.I_z:
+                val = self.power_distribution[i]
+            elif self.power_distribution == 'cosine':
+                val = np.cos((np.pi / 2.0) * z_norm)
+            elif self.power_distribution == 'sine':
+                val = np.sin(np.pi * z_norm)
+            elif self.power_distribution == 'uniform':
+                val = 1.0
+            else: 
+                raise ValueError("Invalid power_distribution input. Must be 'cosine', 'sine', 'uniform', or a list/array of length I_z.")
+            profile.append(val)
         
-        Compute the list of coolant cross sectional areas,
-        Compute the list of porosities from base geometry parameters,
-        Compute the list of hydraulic diameters,
-        Compute the list of heating perimeters,
-
-        Assume constant geometry along the z axis,
-        Assume a single fuel rod with, 
-        Assume no channel box or water rods are present.
-        """
-        if self.channel_type=="square":
-            ACool = self.pitch**2 - np.pi*self.clad_radius**2
-            Dh =  4 * ACool / (2*np.pi * self.clad_radius)
-
-        elif self.channel_type == 'cylindrical':
-            ACool = np.pi * (self.pitch/2) ** 2 - np.pi * self.clad_radius ** 2
-            Dh = 4 * ACool / (np.pi * self.pitch + np.pi * self.clad_radius*2)
-
-        # List of axially ordered coolant cross sectional areas
-        coolant_cross_sectional_areas = np.array(self.I_z * [ACool])
-        # List of axially ordered hydraulic diameters
-        dhs = np.array(self.I_z * [Dh])
-        # List of axially ordered heated perimeters
-        phs = np.array(self.I_z * [2*np.pi*self.clad_radius]) 
-        # List of axially ordered porosities
-        porosities = coolant_cross_sectional_areas / self.pitch**2
-
-
-        return coolant_cross_sectional_areas, porosities, dhs, phs
-
+        return np.array(profile / np.mean(profile)) 
     
 
     def set_transitoire(self, t_tot, Tini, dt):
