@@ -92,7 +92,7 @@ class pyTHM_solver:
         # Active coolant channel attributes
         porosities = geometric_data["active_flow_data"]["porosities"]
         acools = geometric_data["active_flow_data"]["coolant_cross_sectional_areas"]
-        dhs = geometric_data["active_flow_data"]["hydraulic_diamters"]
+        dhs = geometric_data["active_flow_data"]["hydraulic_diameters"]
         phs = geometric_data["active_flow_data"]["heated_perimeters"]
         kexp_profile = geometric_data["active_flow_data"]["k_expansion"]
         kcon_profile = geometric_data["active_flow_data"]["k_contraction"] 
@@ -194,7 +194,7 @@ class pyTHM_solver:
                 qFlow_wr = alpha * qFlow
                 qFlow_actif = (1 - alpha) * qFlow
                 
-                print(f"\n--- Sécante {secant_iter} : alpha = {alpha:.4f} (WR: {qFlow_wr:.2f} kg/s, Active: {qFlow_actif:.2f} kg/s) ---")
+                print(f"\n--- Secant iteration {secant_iter} : alpha = {alpha:.4f} (WR: {qFlow_wr:.2f} kg/s, Active: {qFlow_actif:.2f} kg/s) ---")
 
                 v_lat_prev = np.zeros(len(hole_z_indices))
                 v_lat_prev_prev = np.zeros(len(hole_z_indices))

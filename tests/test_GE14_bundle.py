@@ -51,15 +51,14 @@ def solver_data():
     solver_data = analyser.run_THM_analysis(nz=40, include_water_rods=True) 
     return solver_data
 
-def test_GE14_dfmp40c_v_active_with_wr_Ozaki(solver_data, fast_iapws):
-
-    ref_acool = solver_data["active_flow_data"]["reference_coolant_cross_sectional_area"]
-    mass_flow = 8.407E-02 * (ref_acool / 8.470E-05)
+def test_GE14_dfmp_3p625MW_c_v_active_with_wr_Ozaki(solver_data, fast_iapws):
 
     # --- Test case definition ---
-    power_kw = 40.0
+    mass_flow = 9.16 # kg/s assume mass flow rate of 9.16 kg/s
+    power_kw = 870e3 / 240 # assume core with 240 fuel assemblies and total thermal power of 870 MWth, average power zone
     power_profile = "cosine"
     pdrop = 1
+    print(f"mass flow = {mass_flow}")
 
     
     # Correspondance des options de perte de charge avec les arguments pyTHM
@@ -102,16 +101,14 @@ def test_GE14_dfmp40c_v_active_with_wr_Ozaki(solver_data, fast_iapws):
     # Recover computed parameters and compute pressure drop
     Teff, Twater, rho, voidFrac, P, U, H = THsolve.get_TH_parameters()
     deltaP = (P[0] - P[-1])
-    assert voidFrac[-1] == pytest.approx(0.76304, abs=1e-5)
-    assert deltaP == pytest.approx(41933, abs=1)
+    assert voidFrac[-1] == pytest.approx(0.76503, abs=1e-5)
+    assert deltaP == pytest.approx(41535, abs=1)
 
-def test_GE14_dfmp40c_v_active_no_wr_Ozaki(solver_data, fast_iapws):
-
-    ref_acool = solver_data["active_flow_data"]["reference_coolant_cross_sectional_area"]
-    mass_flow = 8.407E-02 * (ref_acool / 8.470E-05)
+def test_GE14_dfmp_3p625MW_c_active_no_wr_Ozaki(solver_data, fast_iapws):
 
     # --- Test case definition ---
-    power_kw = 40.0
+    mass_flow = 9.16 # kg/s assume mass flow rate of 9.16 kg/s
+    power_kw = 870e3 / 240 # assume core with 240 fuel assemblies and total thermal power of 870 MWth, average power zone
     power_profile = "cosine"
     pdrop = 1
 
@@ -157,16 +154,14 @@ def test_GE14_dfmp40c_v_active_no_wr_Ozaki(solver_data, fast_iapws):
     Teff, Twater, rho, voidFrac, P, U, H = THsolve.get_TH_parameters()
     deltaP = (P[0] - P[-1])
 
-    assert voidFrac[-1] == pytest.approx(0.74815, abs=1e-5)
-    assert deltaP == pytest.approx(42782, abs=1)
+    assert voidFrac[-1] == pytest.approx(0.75032, abs=1e-5)
+    assert deltaP == pytest.approx(42381, abs=1)
 
-def test_GE14_dfmp20c_v_active_wr_noholes_GERamp(solver_data, fast_iapws):
-
-    ref_acool = solver_data["active_flow_data"]["reference_coolant_cross_sectional_area"]
-    mass_flow = 8.407E-02 * (ref_acool / 8.470E-05)
+def test_GE14_dfmp_1p8125MW_c_v_active_wr_noholes_GERamp(solver_data, fast_iapws):
 
     # --- Test case definition ---
-    power_kw = 20.0
+    mass_flow = 9.16 # kg/s assume mass flow rate of 9.16 kg/s
+    power_kw = 870e3 / 240 / 2 # assume core with 240 fuel assemblies and total thermal power of 870 MWth, low power zone
     power_profile = 'cosine'
     pdrop = 1
     frfaccorel_choice = 'Churchill' 
@@ -207,16 +202,14 @@ def test_GE14_dfmp20c_v_active_wr_noholes_GERamp(solver_data, fast_iapws):
     # Recover computed parameters and compute pressure drop
     Teff, Twater, rho, voidFrac, P, U, H = THsolve.get_TH_parameters()
     deltaP = P[0] - P[-1]
-    assert voidFrac[-1] == pytest.approx(0.49882, abs=1e-5)
-    assert deltaP == pytest.approx(19682, abs=1)
+    assert voidFrac[-1] == pytest.approx(0.50252, abs=1e-5)
+    assert deltaP == pytest.approx(19598, abs=1)
 
-def test_GE14_dfmp40c_no_holes_WR_Hibiki(solver_data, fast_iapws):
-
-    ref_acool = solver_data["active_flow_data"]["reference_coolant_cross_sectional_area"]
-    mass_flow = 8.407E-02 * (ref_acool / 8.470E-05)
+def test_GE14_dfmp_3p625MW_c_no_holes_WR_Hibiki(solver_data, fast_iapws):
 
     # --- Test case definition ---
-    power_kw = 40.0
+    mass_flow = 9.16 # kg/s assume mass flow rate of 9.16 kg/s
+    power_kw = 870e3 / 240 # assume core with 240 fuel assemblies and total thermal power of 870 MWth, average power zone
     power_profile = 'cosine'
     pdrop = 1
     frfaccorel_choice = 'Churchill' 
@@ -258,16 +251,15 @@ def test_GE14_dfmp40c_no_holes_WR_Hibiki(solver_data, fast_iapws):
     # Recover computed parameters and compute pressure drop
     Teff, Twater, rho, voidFrac, P, U, H = THsolve.get_TH_parameters()
     deltaP = P[0] - P[-1]
-    assert voidFrac[-1] == pytest.approx(0.64586, abs=1e-5)
-    assert deltaP == pytest.approx(33292, abs=1)
+    assert voidFrac[-1] == pytest.approx(0.64498, abs=1e-5)
+    assert deltaP == pytest.approx(33000, abs=1)
+    print(mass_flow)
 
-def test_GE14_dfmp20s_WR_EPRIVoidModel(solver_data, fast_iapws):
-
-    ref_acool = solver_data["active_flow_data"]["reference_coolant_cross_sectional_area"]
-    mass_flow = 8.407E-02 * (ref_acool / 8.470E-05)
+def test_GE14_dfmp_1p8125MW_s_WR_EPRIVoidModel(solver_data, fast_iapws):
 
     # --- Test case definition ---
-    power_kw = 20.0
+    mass_flow = 9.16 # kg/s assume mass flow rate of 9.16 kg/s
+    power_kw = 870e3 / 240 / 2 # assume core with 240 fuel assemblies and total thermal power of 870 MWth, low power zone
     power_profile = 'sine'
     pdrop = 1
     frfaccorel_choice = 'Churchill'
@@ -310,5 +302,5 @@ def test_GE14_dfmp20s_WR_EPRIVoidModel(solver_data, fast_iapws):
     # Recover computed parameters and compute pressure drop
     Teff, Twater, rho, voidFrac, P, U, H = THsolve.get_TH_parameters()
     deltaP = P[0] - P[-1]
-    assert voidFrac[-1] == pytest.approx(0.47502, abs=1e-5)
-    assert deltaP == pytest.approx(18028, abs=1)
+    assert voidFrac[-1] == pytest.approx(0.48656, abs=1e-5)
+    assert deltaP == pytest.approx(18098, abs=1)

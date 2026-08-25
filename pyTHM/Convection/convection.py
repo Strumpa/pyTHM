@@ -194,12 +194,17 @@ class DFMclass():
 
         self.q__ = np.zeros(self.nCells)
         self.QFUEL = np.zeros(self.nCells)
-        
+
+        if self.cladRadius > 0.0:
+            number_of_pins = np.array(self.phs[:-1]) / (2 * np.pi * self.cladRadius)
+        else: 
+            number_of_pins = 0
+
         if Ptot > 0.0:
             Power_dist = Ptot * axial_p_forms / self.nCells #W Axial power distribution
             linear_powers = Power_dist
             assembly_section = self.pitch**2
-            proportion_fuel = assembly_section / (np.pi * self.fuelRadius**2) #m2
+            proportion_fuel = assembly_section / (number_of_pins*(np.pi * self.fuelRadius**2)) #m2 / m2
             fraction_in_fuel = Fpow*proportion_fuel #Fraction of the total power released in fuel
             fraction_in_coolant = (1.0-Fpow)*proportion_fuel # Fraction of the total power released in coolant
             if self.dt == 0:
@@ -208,7 +213,6 @@ class DFMclass():
                 self.q__ = np.zeros(self.nCells)
                 for i in range(self.nCells):
                     self.q__[i] = phi2[i]*self.phs[i] / self.areaMatrix[i]
-                print(f"q__[0] = {self.q__[0]}")
             if self.dt != 0: # This option is not suppoted yet, dummy initialization for now
                 t_final_q = 0
                 self.q__ = np.zeros((len(self.timeList), len(axial_p_forms)))
