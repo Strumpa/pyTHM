@@ -38,7 +38,7 @@ class FastIAPWS:
         """
         print("--- Initialisation des tables thermodynamiques (IAPWS97) ---")
         # --- 1. 1D SATURATION TABLES (Pressure only) ---
-        self.P_arr = np.linspace(P_outlet*1e-6-0.1, P_outlet*1e-6+1.5, 300) # MPa
+        self.P_arr = np.linspace(P_outlet*1e-6-0.5, P_outlet*1e-6+1.5, 300) # MPa
         
         self.Tsat, self.hl, self.hg = np.zeros(300), np.zeros(300), np.zeros(300)
         self.rhol, self.rhog = np.zeros(300), np.zeros(300)

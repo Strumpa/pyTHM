@@ -593,6 +593,7 @@ class DFMclass():
     #The pressure inlet change so the inlet velocity and enthalpy need to be updated between the pressure-velocity and the enthalpy resolution
     def updateInlet(self):
         #Update uInlet
+        print(f"P[-1][0] = {self.P[-1][0]} before calling IAPWS97", flush=True)
         self.rhoInlet = IAPWS97(T = self.tInlet, P = self.P[-1][0]*10**(-6)).rho #kg/m3
         self.uInlet = self.qFlow / (self.areaMatrix[0] * self.rhoInlet) #m/s
         #Update hInlet
@@ -908,12 +909,28 @@ class DFMclass():
             x_borne_sup = min_lisse(0.999, x_flow, 1e-4)
             x = max_lisse(1e-5, x_borne_sup, 1e-5)
             X_tt_inv = ((x/(1.0-x))**0.9) * ((rho_l/rho_g)**0.5) * ((mu_g/mu_l)**0.1)
-            F_calcul = 2.35 *(0.213 + X_tt_inv)**0.736 
+            # Following conditions for the Reynolds Factor are taken from Groenveld and Snoek (10.1007/978-3-662-01657-2_3)
+            if X_tt_inv > 0.1:
+                F_calcul = 2.35 *(0.213 + X_tt_inv)**0.736
+            else:
+                F_calcul = 1
+            
             F = if_lisse(X_tt_inv, 0.100207, 0.01, F_calcul, 1.0)
             Re_l_chen = max(1e-4, G *(1.0-x)*self.D_h[i]/mu_l)
             H_sp = 0.023 * (Pr_l**0.4)*(Re_l_chen**0.8)*k_l/self.D_h[i]
             H_c_chen = F * H_sp
-            S_fz = 1.0/(1.0 + 2.53e-6*(Re_l_chen*F**(1.25))**1.17)
+            # S_fz = 1.0/(1.0 + 2.53e-6*(Re_l_chen*F**(1.25))**1.17) This correlation is defined by Orian et al. (10.1016/j.energy.2009.08.024)
+            # for boiling flow in HORIZONTAL TUBES (CANDU reactors), therefore not adapted to BWR.
+            
+            # The following equations are taken from Groenveld and Snoek (10.1007/978-3-662-01657-2_3)
+            Re_tp = F**(1.25)*Re_l_chen 
+            if Re_tp < 32.5: # Re_tp < 32.5
+                S_fz = 1/(1 + 0.12*Re_tp**(1.14))
+            elif Re_tp < 70: # 32.5 =< Re_tp < 70
+                S_fz = 1/(1 + 0.42*Re_tp**(0.78))
+            else: # Re_tp > 70
+                S_fz = 0.1
+
             C_fz = 0.00122 * (k_l**(0.79) * C_l**(0.45) * rho_l**(0.49))/(mu_l**(0.29) * sigma**(0.5) * h_fg**(0.24) * rho_g**0.24)
             T_surf_guess = self.T_water[i] + phi/H_c_chen
             #Newton loop for nucleate boiling
