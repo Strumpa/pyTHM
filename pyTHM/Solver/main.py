@@ -136,6 +136,11 @@ class pyTHM_solver:
         self.pin_pitch = geometric_data["fuel_data"]["pin_pitch"] # distance between the centers of two adjacent fuel rods in meters
         self.fuel_length = geometric_data["fuel_data"]["max_rod_length"]
 
+        if self.clad_radius > 0.0:
+            self.number_of_pins = np.array(phs) / (2*np.pi*self.clad_radius)
+        else:
+            self.number_of_pins = 0
+
         # Estimate uInlet in the active flow based on mass flow rate, first estimated for rhoInlet and the coolant cross sectional area.
         self.uInlet = self.qFlow / (self.rhoInlet*acools[0]) #m/s
         
@@ -388,11 +393,11 @@ class pyTHM_solver:
             z = self.convection_sol.z_mesh[axial_plane_nb]
             T_surf = self.convection_sol.T_surf[axial_plane_nb]
             Qfiss = self.convection_sol.get_Fission_Power()[axial_plane_nb]
-            self.T_distributions_axial.append(self.run_Conduction_In_Fuel_at_z(z,Qfiss,T_surf, transient))
+            self.T_distributions_axial.append(self.run_Conduction_In_Fuel_at_z(z, Qfiss, T_surf, transient))
 
         return
     
-    def run_Conduction_In_Fuel_at_z(self,z,Qfiss_z,T_surf_z, transient = False):
+    def run_Conduction_In_Fuel_at_z(self, z, Qfiss_z, T_surf_z, transient = False):
         print(f"$$---------- Setting up FDM_HeatConductionInFuelPin class for z = {z} m, Qfiss(z) = {Qfiss_z} W/m^3 and T_surf(z) = {T_surf_z} K")
         heat_conduction = FDM_Fuel(self.fuel_radius, self.I_f, self.gap_radius, self.clad_radius, self.I_c, Qfiss_z, self.k_fuel, self.k_clad, self.H_gap, z, T_surf_z)
         if transient:

@@ -121,6 +121,11 @@ class DFMclass():
         self.D_h[self.nCells] = dhs[-1]
         self.phs[self.nCells] = phs[-1]
 
+        if self.cladRadius > 0.0:
+            self.number_of_pins = np.array(phs) / (2*np.pi*self.cladRadius)
+        else: 
+            self.number_of_pins = 0.0
+
         #compute temporary uInlet
         self.qFlow = qFlow #kg/s
         self.rhoInlet = IAPWS97(T = self.tInlet, P = falsePInlet*10**(-6)).rho #kg/m3
@@ -195,16 +200,11 @@ class DFMclass():
         self.q__ = np.zeros(self.nCells)
         self.QFUEL = np.zeros(self.nCells)
 
-        if self.cladRadius > 0.0:
-            number_of_pins = np.array(self.phs[:-1]) / (2 * np.pi * self.cladRadius)
-        else: 
-            number_of_pins = 0
-
         if Ptot > 0.0:
             Power_dist = Ptot * axial_p_forms / self.nCells #W Axial power distribution
             linear_powers = Power_dist
             assembly_section = self.pitch**2
-            proportion_fuel = assembly_section / (number_of_pins*(np.pi * self.fuelRadius**2)) #m2 / m2
+            proportion_fuel = assembly_section / (self.number_of_pins*(np.pi * self.fuelRadius**2)) #m2 / m2
             fraction_in_fuel = Fpow*proportion_fuel #Fraction of the total power released in fuel
             fraction_in_coolant = (1.0-Fpow)*proportion_fuel # Fraction of the total power released in coolant
             if self.dt == 0:
@@ -889,7 +889,7 @@ class DFMclass():
             Tsat = self.FAST_IAPWS.get_Tsat(P_MPa)
             DTSUB = updateVariables.getDTSUB(i)
             H_kJ = self.h_z[i]*10**-3
-            phi = (self.q__[i] * self.areaMatrix[i])/(2 * np.pi * self.cladRadius)
+            phi = (self.q__[i] * self.areaMatrix[i])/(self.number_of_pins[i] * 2 * np.pi * self.cladRadius)
             rho_l = self.FAST_IAPWS.get_rhol(P_MPa)
             rho_g = self.FAST_IAPWS.get_rhog(P_MPa)
             mu_l = self.FAST_IAPWS.get_mul(P_MPa)
@@ -948,8 +948,8 @@ class DFMclass():
             T_surf_vap = (phi / Hc_vap) + self.T_water
             #Global assembly
             T_onset = Tsat-DTSUB
-            T_surf_trans1 = if_lisse(self.T_water[i], T_onset,0.5,T_surf_boil, T_surf_liq)
-            Hc_trans1 = if_lisse(self.T_water[i], T_onset,0.5,Hc_boil, Hc_liq)
+            T_surf_trans1 = if_lisse(self.T_water[i], T_onset, 0.5, T_surf_boil, T_surf_liq)
+            Hc_trans1 = if_lisse(self.T_water[i], T_onset, 0.5, Hc_boil, Hc_liq)
             val_T = if_lisse(H_kJ, hg, 10.0, T_surf_vap, T_surf_trans1)
             val_Hc = if_lisse(H_kJ, hg, 10.0, Hc_vap, Hc_trans1)
             self.T_surf[i] = np.ravel(val_T)[0]
