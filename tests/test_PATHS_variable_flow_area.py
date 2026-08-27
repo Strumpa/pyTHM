@@ -58,7 +58,7 @@ def test_PATHS_expansion(fast_iapws):
     geometric_data["active_flow_data"]["number_of_axial_meshes"] = I_z
     geometric_data["active_flow_data"]["porosities"] = porosities
     geometric_data["active_flow_data"]["coolant_cross_sectional_areas"] = acools
-    geometric_data["active_flow_data"]["hydraulic_diamters"] = dhs
+    geometric_data["active_flow_data"]["hydraulic_diameters"] = dhs
     geometric_data["active_flow_data"]["heated_perimeters"] = phs
     geometric_data["active_flow_data"]["pitch"] = 0.000
 
@@ -170,7 +170,7 @@ def test_PATHS_contraction(fast_iapws):
     geometric_data["active_flow_data"]["number_of_axial_meshes"] = I_z
     geometric_data["active_flow_data"]["porosities"] = porosities
     geometric_data["active_flow_data"]["coolant_cross_sectional_areas"] = acools
-    geometric_data["active_flow_data"]["hydraulic_diamters"] = dhs
+    geometric_data["active_flow_data"]["hydraulic_diameters"] = dhs
     geometric_data["active_flow_data"]["heated_perimeters"] = phs
     geometric_data["active_flow_data"]["pitch"] = 0.000
 

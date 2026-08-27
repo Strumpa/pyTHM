@@ -45,7 +45,7 @@ def get_PSBT_geometric_data(nz, pitch, cladRadius):
     geometric_data["active_flow_data"]["number_of_axial_meshes"] = nz
     geometric_data["active_flow_data"]["porosities"] = porosities
     geometric_data["active_flow_data"]["coolant_cross_sectional_areas"] = acools
-    geometric_data["active_flow_data"]["hydraulic_diamters"] = hydraulic_diameters
+    geometric_data["active_flow_data"]["hydraulic_diameters"] = hydraulic_diameters
     geometric_data["active_flow_data"]["heated_perimeters"] = heated_perimeters
     geometric_data["active_flow_data"]["k_expansion"] = np.array(nz * [0.0])
     geometric_data["active_flow_data"]["k_contraction"]  = np.array(nz * [0.0])
