@@ -18,3 +18,6 @@ build
 
 tutorials/__pycache__/
 tutorials/results/
+
+tests/results/
+results/
