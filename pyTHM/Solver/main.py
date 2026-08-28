@@ -338,7 +338,7 @@ class pyTHM_solver:
             self.alpha_final = 0.0
 
         if self.solveConduction:
-            self.Tsurf = self.convection_sol.compute_T_surf()
+            self.Tsurf, self.Hfc, self.Hnb, self.Hc = self.convection_sol.compute_T_surf()
 
         if self.solveConduction:
             # Prepare and solve 1D radial heat conduction in the fuel rod, given a Clad surface temperature as a bondary condition 
@@ -355,6 +355,11 @@ class pyTHM_solver:
                 for z_val in self.plot_results:
                     self.plot_Temperature_at_z(z_val)
     
+    def return_Tsurf(self):
+        return self.Tsurf
+
+    def return_H(self):
+        return self.Hfc, self.Hnb, self.Hc
     
     def generate_axial_power_profile(self):
         """
@@ -467,7 +472,7 @@ class pyTHM_solver:
             else:
                 T_surf_fuel_z = self.T_distributions_axial[i].T_distrib[self.I_f+1]
             self.T_fuel_surface[i] = T_surf_fuel_z
-        return
+        return self.T_fuel_surface
 
     def plot_Temperature_at_z(self, z_val):
         print(f"$$---------- Plotting Temperature distribution in rod + channel z = {z_val} m")

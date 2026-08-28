@@ -201,7 +201,7 @@ class DFMclass():
         self.QFUEL = np.zeros(self.nCells)
 
         if Ptot > 0.0:
-            Power_dist = Ptot * axial_p_forms / self.nCells #W Axial power distribution
+            Power_dist = (Ptot) * axial_p_forms / self.nCells #W Axial power distribution
             linear_powers = Power_dist
             assembly_section = self.pitch**2
             proportion_fuel = assembly_section / (self.number_of_pins*(np.pi * self.fuelRadius**2)) #m2 / m2
@@ -882,12 +882,14 @@ class DFMclass():
         self.h_z = self.H[-1]
         self.T_surf = np.zeros(self.nCells)
         self.Hc = np.zeros(self.nCells)
+        self.Hnb = np.zeros(self.nCells)
+        self.Hfc = np.zeros(self.nCells)
         updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.rsin_face, self.FAST_IAPWS)
         updateVariables.createFields()
         for i in range(self.nCells):
             hl, hg = updateVariables.getPhasesEnthalpy(i)
-            P_MPa = self.Pfin[i]*10**-6
-            Tsat = self.FAST_IAPWS.get_Tsat(P_MPa)
+            P_MPa = self.Pfin[i]*10**-6 # [Mpa]
+            Tsat = self.FAST_IAPWS.get_Tsat(P_MPa) # [K]
             DTSUB = updateVariables.getDTSUB(i)
             H_kJ = self.h_z[i]*10**-3
             phi = (self.q__[i] * self.areaMatrix[i])/(self.number_of_pins[i] * 2 * np.pi * self.cladRadius)
@@ -902,11 +904,19 @@ class DFMclass():
             sigma = self.FAST_IAPWS.get_sigma(P_MPa)
             h_fg = (hg - hl) * 1000.0
             # Liquid regime: Dittus-Boelter
-            Pr_l = (C_l * mu_l) / k_l
+            #Pr_l = (C_l * mu_l) / k_l
             Pr_g = (C_g * mu_g) / k_g
             Re_l_db = max(1e-4, updateVariables.getReynoldsNumberLiquid(i))
-            Hc_liq = 0.023 * (Pr_l**0.4) * (Re_l_db**0.8) * k_l / self.D_h[i]
-            T_surf_liq = (phi / Hc_liq) + self.T_water[i]
+            #Hc_liq = 0.023 * (Pr_l**0.4) * (Re_l_db**0.8) * k_l / self.D_h[i]
+            #T_surf_liq = (phi / Hc_liq) + self.T_water[i]
+            # Liquid regime: Gnielinsky
+            Pr_l = (C_l * mu_l) / k_l
+            Re_l = max(1e-4, updateVariables.getReynoldsNumberLiquid(i))
+            fric = updateVariables.getFrictionFactor(i)
+            Nu_gnielinski = ((fric/8)*(Re_l-1000)*Pr_l)/(1 + 12.7*(fric/8)**(1/2)*(Pr_l**(2/3)-1))
+            Hc_gnielinski = Nu_gnielinski * k_l / self.D_h[i]
+            self.Hfc[i] = Hc_gnielinski
+            T_surf_liq = (phi / Hc_gnielinski) + self.T_water[i]
             # Boiling regime: Chen
             G = self.rho[-1][i] * abs(self.U[-1][i])
             x_flow = updateVariables.getQuality(i)
@@ -922,7 +932,7 @@ class DFMclass():
             F = if_lisse(X_tt_inv, 0.100207, 0.01, F_calcul, 1.0)
             Re_l_chen = max(1e-4, G *(1.0-x)*self.D_h[i]/mu_l)
             H_sp = 0.023 * (Pr_l**0.4)*(Re_l_chen**0.8)*k_l/self.D_h[i]
-            H_c_chen = F * H_sp
+            H_c_chen = F * Hc_gnielinski #H_sp
             # S_fz = 1.0/(1.0 + 2.53e-6*(Re_l_chen*F**(1.25))**1.17) This correlation is defined by Orian et al. (10.1016/j.energy.2009.08.024)
             # for boiling flow in HORIZONTAL TUBES (CANDU reactors), therefore not adapted to BWR.
             
@@ -957,6 +967,7 @@ class DFMclass():
                     T_surf_guess = T_surf_new
                     break
                 T_surf_guess = 0.5 * T_surf_new + 0.5 * T_surf_guess
+            self.Hnb[i] = H_fz
             T_surf_boil = T_surf_guess
             Hc_boil = H_nb + H_c_chen
             # Vapor regime: Dittus-Boelter
@@ -965,13 +976,13 @@ class DFMclass():
             T_surf_vap = (phi / Hc_vap) + self.T_water
             #Global assembly
             T_onset = Tsat-DTSUB
-            T_surf_trans1 = if_lisse(self.T_water[i], T_onset, 0.5, T_surf_boil, T_surf_liq)
-            Hc_trans1 = if_lisse(self.T_water[i], T_onset, 0.5, Hc_boil, Hc_liq)
+            T_surf_trans1 = if_lisse(self.T_water[i], T_onset,0.005,T_surf_boil, T_surf_liq)
+            Hc_trans1 = if_lisse(self.T_water[i], T_onset,0.005,Hc_boil,Hc_gnielinski) #Hc_liq)
             val_T = if_lisse(H_kJ, hg, 10.0, T_surf_vap, T_surf_trans1)
             val_Hc = if_lisse(H_kJ, hg, 10.0, Hc_vap, Hc_trans1)
             self.T_surf[i] = np.ravel(val_T)[0]
             self.Hc[i] = np.ravel(val_Hc)[0]
-        return self.T_surf
+        return self.T_surf, self.Hfc, self.Hnb, self.Hc
     #Function to use the sous relaxation
     def sousRelaxation(self):
 
