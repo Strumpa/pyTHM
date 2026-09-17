@@ -15,6 +15,7 @@ build
 *.pdb
 *.egg
 *.egg-info/
+*.png
 
 tutorials/__pycache__/
 tutorials/results/
