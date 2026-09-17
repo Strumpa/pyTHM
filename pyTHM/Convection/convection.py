@@ -19,10 +19,12 @@ from iapws import IAPWS97
 import matplotlib.pyplot as plt
 from pyTHM.Solver.linalg import FVM, numericalResolution
 from pyTHM.WaterProperties.waterProperties import statesVariables
+from pyTHM.Lissage.smooth import if_lisse, max_lisse, min_lisse
+from pyTHM.WaterProperties.waterProperties import FastIAPWS
 import cProfile
 
 class DFMclass():
-    def __init__(self, canal_type, nCells, tInlet, qFlow, pOutlet, height, fuelRadius, cladRadius, pitch,  numericalMethod, frfaccorel, P2P2corel, voidFractionCorrel, dt = 0, t_tot = 0, D_h = 0, volumetricArea = 0):
+    def __init__(self, channel_type, nCells, tInlet, qFlow, pOutlet, height, fuelRadius, cladRadius, pin_pitch, pitch,  numericalMethod, frfaccorel, P2P2corel, voidFractionCorrel, FAST_IAPWS, dt = 0, t_tot = 0, D_h = 0, volumetricArea = 0, porosities=None, acools=None, dhs=None, phs=None, kexp=None, kcon=None, rsin=None):
         
         """
         Attributes:
@@ -30,11 +32,19 @@ class DFMclass():
         - pOutlet (Pa), tInlet (K): Inlet velocity, outle t pressure, and inlet enthalpy.
         - qFlow: Mass flow rate of the fluid (kg/s).
         - height (m), fuelRadius (m), cladRadius (m): Geometry of the channel (length, fuel, and clad radii).
+        - pin_pitch: Distance between fuel pins in the assembly (m).
         - pitch: Channel width or distance, depending on the geometry.
-        - canalType: Geometry type of the channel, either 'square' or 'cylindrical'.
+        - channel_type: Geometry type of the channel, either 'square' or 'cylindrical'.
         - numericalMethod: Chosen method for numerical resolution (e.g., Gauss-Seidel, FVM, BiGStab).
         - voidFractionCorrel, frfaccorel, P2Pcorel: Correlations used for void fraction and other flow properties.
+        - FAST_IAPWS : FastIAPWS object with thermo-physical quantities pre-tabulated.
         - dt, t_tot: Time-step and total simulation time for transient analysis.
+        - porosities: Array of porosity values along the channel.
+        - acools: Array of flow areas for the coolant along the channel (m²).
+        - dhs: Array of hydraulic diameters along the channel (m).
+        - phs: Array of heating perimeters along the channel (m).
+        - kexp, kcon: Arrays of singular pressure drop coefficients for expansion and contraction along the channel.
+        - rsin: Array of flow area ratios (small/large) along the channel.
         """
 
         """
@@ -48,6 +58,7 @@ class DFMclass():
         - calculateResiduals(): Calculates the residuals for velocity, pressure, and void fraction, and monitors the convergence.
         - testConvergence(k): Checks if the solution has converged based on residuals after iteration k.
         - residualsVisu(): Updates and visualizes residuals during the iterative solving process.
+        - update_jump_source(): Updates the source term for momentum to take into account singular pressure drops due to expansions and contractions in the channel.
         - resolveDFM(): Main function that orchestrates the simulation by calling initializations, solving the system, and managing iterations and convergence criteria.
         - plotResults(): Plots the results of the simulation, including velocity, pressure, enthalpy, and void fraction profiles.
         - setInitialFieldsTransient(): Initializes the fields for transient simulation.
@@ -74,9 +85,10 @@ class DFMclass():
         self.pOutlet = pOutlet
         self.tInlet = tInlet
 
+        # Initialize Fast IAPWS tables by pretabulating values around pOutlet
+        self.FAST_IAPWS = FAST_IAPWS
         #calculate temporary hInlet
-        pressureDrop = 186737 #Pa/m
-        falsePInlet = pOutlet + height * pressureDrop
+        falsePInlet = pOutlet
         self.hInlet = IAPWS97(T = self.tInlet, P = falsePInlet * 10**(-6)).h*1000 #J/kg
 
         #Geometry parameters
@@ -85,27 +97,41 @@ class DFMclass():
         self.cladRadius = cladRadius #External radius of the clad m
         self.pitch = pitch
         self.wall_dist = pitch
-        self.canalType = canal_type
+        self.pin_pitch = pin_pitch
+        self.channelType = channel_type
 
-        if self.canalType == 'square':
-            self.flowArea = self.pitch ** 2 - np.pi * self.cladRadius ** 2
-        elif self.canalType == 'cylindrical':
-            self.waterGap = self.pitch -  self.cladRadius #Gap between the clad and the water m
-            self.waterRadius =  self.pitch #External radius of the water m
-            self.flowArea = np.pi * self.waterRadius ** 2 - np.pi * self.cladRadius ** 2
+        #Porous media parameters
+        self.poro = np.zeros(self.nFaces)
+        self.areaMatrix = np.zeros(self.nFaces)
+        self.acools = acools
+        self.D_h = np.zeros(self.nFaces)
+        self.phs = np.zeros(self.nFaces)
 
+        self.poro[0] = porosities[0]
+        self.areaMatrix[0] = acools[0]
+        self.D_h[0] = dhs[0]
+        self.phs[0] = phs[0]
+        for i in range(1, self.nCells):
+            self.poro[i] = (porosities[i-1]+porosities[i])/2.0
+            self.areaMatrix[i] = (acools[i-1]+acools[i])/2.0    
+            self.D_h[i] = (dhs[i-1]+dhs[i])/2.0
+            self.phs[i] = (phs[i-1]+phs[i])/2.0
+        self.poro[self.nCells] = porosities[-1]
+        self.areaMatrix[self.nCells] = acools[-1]
+        self.D_h[self.nCells] = dhs[-1]
+        self.phs[self.nCells] = phs[-1]
 
-        #calculate temporary uInlet
+        if self.cladRadius > 0.0:
+            self.number_of_pins = np.array(phs) / (2*np.pi*self.cladRadius)
+        else: 
+            self.number_of_pins = 0.0
+
+        #compute temporary uInlet
         self.qFlow = qFlow #kg/s
         self.rhoInlet = IAPWS97(T = self.tInlet, P = falsePInlet*10**(-6)).rho #kg/m3
-        self.uInlet = self.qFlow / (self.flowArea * self.rhoInlet) #m/s
+        self.uInlet = self.qFlow / (self.areaMatrix[0] * self.rhoInlet) #m/s
 
-        self.DV = (self.height/self.nCells) * self.flowArea #Volume of the control volume m3
-        
-        if self.canalType == 'square':
-            self.Dh =  4 * self.flowArea / ( 2*np.pi * self.cladRadius)
-        elif self.canalType == 'cylindrical':
-            self.Dh = 4 * self.flowArea / (np.pi * self.waterRadius*2 + np.pi * self.cladRadius*2)
+        self.DV = (self.height/self.nCells) * self.areaMatrix #Volume of the control volume m3
 
 
         self.Dz = self.height/self.nCells #Height of the control volume m
@@ -113,30 +139,34 @@ class DFMclass():
         self.epsilonTarget = 0.1
         self.K_loss = 0.0
 
-        #Porous media parameters
-        self.porosity = 1
-        self.poro = []
-        for i in range(self.nFaces):
-            if i > self.nFaces/4:
-                self.poro.append(self.porosity)
-            else:
-                self.poro.append(1)
 
-        self.D_h = []
-        self.areaMatrix = []
-        for i in range(self.nFaces):
-            self.areaMatrix.append(self.poro[i] * self.flowArea)
-            self.D_h.append(self.Dh * self.poro[i]**2)
-
+        self.kexp_face = np.zeros(self.nFaces)
+        self.kcon_face = np.zeros(self.nFaces)
+        self.rsin_face = np.ones(self.nFaces)
+        if kexp is not None and kcon is not None and rsin is not None:
+            self.kexp_face[0] = kexp[0]
+            self.kcon_face[0] = kcon[0]
+            self.rsin_face[0] = rsin[0]
+            for i in range(1, self.nCells):
+                self.kexp_face[i] = (kexp[i-1] + kexp[i]) / 2.0
+                self.kcon_face[i] = (kcon[i-1] + kcon[i]) / 2.0
+                self.rsin_face[i] = (rsin[i-1] + rsin[i]) / 2.0
+            self.kexp_face[-1] = kexp[-1]
+            self.kcon_face[-1] = kcon[-1]
+            self.rsin_face[-1] = rsin[-1]
+        
+        self.S_mass = np.zeros(self.nFaces)
+        self.S_mom = np.zeros(self.nFaces)
+        self.S_h = np.zeros(self.nFaces)
 
         self.epsInnerIteration = 1e-4
         self.maxInnerIteration = 1000
-        if self.numericalMethod == 'BiCGStab' or self.numericalMethod == 'BiCG':
+        if self.numericalMethod == 'BiCGStab' or self.numericalMethod == 'BiCG' or self.numericalMethod == 'FVM':
             self.sousRelaxFactor = 0.8
         else:
             self.sousRelaxFactor = 1
         self.epsOuterIteration = 1e-4
-        self.maxOuterIteration = 1000
+        self.maxOuterIteration = 50
 
         #Universal constant
         self.g = 9.81 #m/s^2
@@ -164,25 +194,33 @@ class DFMclass():
     
     #Fission power
     def set_Fission_Power(self, Ptot, axial_p_forms, Fpow):
+
         dv = self.pitch**2*(self.height / self.nCells) #m
-        Power_dist = Ptot * axial_p_forms / self.nCells #W Axial power distribution
-        linear_powers = Power_dist
-        assembly_section = self.pitch**2
-        proportion_fuel = assembly_section / (np.pi * self.fuelRadius**2) #m2
-        fraction_in_fuel = Fpow*proportion_fuel #Fraction of the total power released in fuel
-        fraction_in_coolant = (1.0-Fpow)*proportion_fuel # Fraction of the total power released in coolant
-        if self.dt == 0:
-            self.QFUEL = Power_dist*fraction_in_fuel / dv #W/m3
-            phi2 = 0.5*self.QFUEL*self.fuelRadius**2 / self.cladRadius
-            self.q__ = 2 * np.pi * self.cladRadius / (self.flowArea) * phi2 # W/m3 in the coolant
-        if self.dt != 0: # This option is not suppoted yet, dummy initialization for now
-            t_final_q = 0
-            self.q__ = np.zeros((len(self.timeList), len(axial_p_forms)))
-            for t, time in enumerate(self.timeList):
-                if time < t_final_q:
-                    self.q__[t] = (self.timeList[t]/t_final_q)*Power_dist*fraction_in_fuel / dv #W/m3
-                else:
-                    self.q__[t] = Power_dist*fraction_in_fuel / dv #W/m3
+
+        self.q__ = np.zeros(self.nCells)
+        self.QFUEL = np.zeros(self.nCells)
+
+        if Ptot > 0.0:
+            Power_dist = Ptot * axial_p_forms / self.nCells #W Axial power distribution
+            linear_powers = Power_dist
+            assembly_section = self.pitch**2
+            proportion_fuel = assembly_section / (self.number_of_pins*(np.pi * self.fuelRadius**2)) #m2 / m2
+            fraction_in_fuel = Fpow*proportion_fuel #Fraction of the total power released in fuel
+            fraction_in_coolant = (1.0-Fpow)*proportion_fuel # Fraction of the total power released in coolant
+            if self.dt == 0:
+                self.QFUEL = Power_dist*fraction_in_fuel / dv #W/m3
+                phi2 = 0.5*self.QFUEL*self.fuelRadius**2 / self.cladRadius
+                self.q__ = np.zeros(self.nCells)
+                for i in range(self.nCells):
+                    self.q__[i] = phi2[i]*self.phs[i] / self.areaMatrix[i]
+            if self.dt != 0: # This option is not suppoted yet, dummy initialization for now
+                t_final_q = 0
+                self.q__ = np.zeros((len(self.timeList), len(axial_p_forms)))
+                for t, time in enumerate(self.timeList):
+                    if time < t_final_q:
+                        self.q__[t] = (self.timeList[t]/t_final_q)*(phi2[i]*self.phs[i]/self.areaMatrix[i]) #W/m3
+                    else:
+                        self.q__[t] = Power_dist*fraction_in_fuel / dv #W/m3
             
 
     #Recovers the fission power distribution
@@ -192,6 +230,12 @@ class DFMclass():
         """
         return self.QFUEL
     
+    def update_sources(self, S_mass, S_mom, S_h):
+        """Updates the lateral source terms (cross-flow and conduction) before each iteration"""
+        self.S_mass = S_mass
+        self.S_mom = S_mom
+        self.S_h = S_h
+
     def get_Fission_Power(self):
         """
         function to retrieve a given source term from the axial profile used to model fission power distribution in the fuel rod
@@ -209,7 +253,7 @@ class DFMclass():
             self.H = [np.ones(self.nFaces)*self.hInlet] #
             self.voidFraction = [np.array([i*self.epsilonTarget/self.nFaces for i in range(self.nFaces)])]
 
-            updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.qFlow, self.fuelRadius,  self.pitch/2)
+            updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.rsin_face, self.FAST_IAPWS)
             updateVariables.createFields()
                 
             self.xTh = [np.ones(self.nFaces)]
@@ -220,7 +264,7 @@ class DFMclass():
             self.f = [updateVariables.fTEMP]
             self.areaMatrix_1 = [updateVariables.areaMatrix_1TEMP]
             self.areaMatrix_2 = [updateVariables.areaMatrix_2TEMP]
-            self.areaMatrix = updateVariables.areaMatrixTEMP
+            #self.areaMatrix = updateVariables.areaMatrixTEMP
             self.Vgj = [updateVariables.VgjTEMP]
             self.C0 =[updateVariables.C0TEMP]
             self.VgjPrime = [updateVariables.VgjPrimeTEMP]
@@ -233,7 +277,7 @@ class DFMclass():
                 self.H = [self.enthalpyList[self.timeCount]]
                 self.voidFraction = [self.voidFractionList[self.timeCount]]
 
-                updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.qFlow, self.fuelRadius, self.pitch/2)
+                updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.rsin_face, self.FAST_IAPWS)
                 updateVariables.createFields()
 
                 self.xTh = [np.ones(self.nFaces)]
@@ -244,7 +288,7 @@ class DFMclass():
                 self.f = [updateVariables.fTEMP]
                 self.areaMatrix_1 = [updateVariables.areaMatrix_1TEMP]
                 self.areaMatrix_2 = [updateVariables.areaMatrix_2TEMP]
-                self.areaMatrix = updateVariables.areaMatrixTEMP
+                #self.areaMatrix = updateVariables.areaMatrixTEMP
                 self.Vgj = [updateVariables.VgjTEMP]
                 self.C0 =[updateVariables.C0TEMP]
                 self.VgjPrime = [updateVariables.VgjPrimeTEMP]
@@ -323,39 +367,25 @@ class DFMclass():
                 VAR_VFM_Class.set_ADi(i, ci = - rho_old[i-1]*areaMatrix[i-1],
                 ai = rho_old[i]*areaMatrix[i],
                 bi = 0,
-                di =  0)
+                di =  self.S_mass[i])
             elif i == self.nFaces-1:
                 VAR_VFM_Class.set_ADi(i, 
                 ci = - rho_old[i-1]*areaMatrix[i-1],
                 ai = rho_old[i]*areaMatrix[i],
                 bi = 0,
-                di =  0)
+                di =  self.S_mass[i])
 
             #Inside the pressure submatrix
-            elif i == self.nFaces:
-                DI = -((epsilon_old[i+1] * rho_g_old[i+1] * rho_l_old[i+1] * V_gj_old[i+1]**2 * areaMatrix[i+1] )/ ((1 - epsilon_old[i+1])*rho_old[i+1]) )  + ((epsilon_old[i] * rho_g_old[i] * rho_l_old[i] * V_gj_old[i]**2 * areaMatrix[i] )/ ((1 - epsilon_old[i])*rho_old[i]) )     
-                VAR_VFM_Class.set_ADi(self.nFaces, 
-                ci = 0,
-                ai = - areaMatrix[i],
-                bi = areaMatrix[i+1],
-                di = - (((rho_old[i+1]+ rho_old[i])* self.g/2) * self.DV * ((self.poro[i%self.nFaces]+ self.poro[(i+1)%self.nFaces])/2) / 2) + DI)
-            
-                VAR_VFM_Class.fillingOutsideBoundary(i, i-self.nFaces,
-                ai = - rho_old[i]*VAR_old[i-self.nFaces]*areaMatrix_old_2[i],
-                bi = rho_old[i+1]*VAR_old[i-self.nFaces+1]*areaMatrix_old_1[i+1])
-
-            elif i > self.nFaces and i < 2*self.nFaces-1:
+            elif i >= self.nFaces and i < 2*self.nFaces-1:
                 DI = -((epsilon_old[i+1] * rho_g_old[i+1] * rho_l_old[i+1] * V_gj_old[i+1]**2 * areaMatrix[i+1] )/ ((1 - epsilon_old[i+1])*rho_old[i+1]) )  + ((epsilon_old[i] * rho_g_old[i] * rho_l_old[i] * V_gj_old[i]**2 * areaMatrix[i] )/ ((1 - epsilon_old[i])*rho_old[i]) )     
                 VAR_VFM_Class.set_ADi(i, ci = 0,
                 ai = - areaMatrix[i],
-                bi = areaMatrix[i+1],
-                di = - (((rho_old[i+1]+ rho_old[i])* self.g/2) * self.DV * ((self.poro[i%self.nFaces]+ self.poro[(i+1)%self.nFaces])/2)/ 2) + DI)
+                bi = areaMatrix[i],
+                di = - (((rho_old[i+1]+ rho_old[i])* self.g/2) * self.DV[i%self.nFaces] / 2) + DI + self.S_mom[i%self.nFaces])
             
                 VAR_VFM_Class.fillingOutsideBoundary(i, i-self.nFaces,
                 ai = - rho_old[i]*VAR_old[i-self.nFaces]*areaMatrix_old_2[i],
-                bi = rho_old[i+1]*VAR_old[i+1-self.nFaces]*areaMatrix_old_1[i+1])
-
-        
+                bi = rho_old[i+1]*VAR_old[i+1-self.nFaces]*areaMatrix_old_1[i+1])        
         self.FVM = VAR_VFM_Class
 
     #Create the enthalpy matrix resolution equation system
@@ -380,7 +410,7 @@ class DFMclass():
         i = -1
         DI = (1/2) * (P_old[i-1]*areaMatrix[i-1] - P_old[i]*areaMatrix[i]) * ((U_old[i]+ ((epsilon_old[i] * (rho_l_old[i] - rho_g_old[i]) * V_gj_old[i])/ rho_old[i]))+ (U_old[i-1]+ ((epsilon_old[i-1] * (rho_l_old[i-1] - rho_g_old[i-1]) * V_gj_old[i-1])/ rho_old[i-1]) ) )
         DI2 = - (epsilon_old[i]*rho_l_old[i]*rho_g_old[i]*Dhfg[i]*V_gj_old[i]*areaMatrix[i]/rho_old[i]) + (epsilon_old[i-1]*rho_l_old[i-1]*rho_g_old[i-1]*Dhfg[i-1]*V_gj_old[i-1]*areaMatrix[i-1]/rho_old[i-1])
-        DM1 = self.q__[i-1] * self.DV * (self.poro[i]) + DI + DI2
+        DM1 = self.q__[i-1] * self.DV[i] + DI + DI2 +self.S_h[-1]
         VAR_VFM_Class = FVM(A00 = 1, A01 = 0, Am0 = - rho_old[-2] * U_old[-2] * areaMatrix[-2], Am1 = rho_old[-1] * U_old[-1] * areaMatrix[-1], D0 = self.hInlet, Dm1 = DM1, N_vol = self.nFaces, H = self.height)
         VAR_VFM_Class.boundaryFilling()
         for i in range(1,self.nFaces -1):
@@ -390,7 +420,7 @@ class DFMclass():
             VAR_VFM_Class.set_ADi(i, ci =  - rho_old[i-1] * U_old[i-1] * areaMatrix[i-1],
                 ai = rho_old[i] * U_old[i] * areaMatrix[i],
                 bi = 0,
-                di =  self.q__[i-1] * self.DV * (self.poro[i]) + DI2 + DI)
+                di =  self.q__[i-1] * self.DV[i] + DI2 + DI + self.S_h[i])
         
         self.FVM = VAR_VFM_Class
 
@@ -417,7 +447,7 @@ class DFMclass():
         DI = (1/2) * (P_old[i]*areaMatrix[i] - P_old[i-1]*areaMatrix[i-1]) * ((U_old[i]+ ((epsilon_old[i] * (rho_l_old[i] - rho_g_old[i]) * V_gj_old[i])/ rho_old[i]))+ (U_old[i-1]+ ((epsilon_old[i-1] * (rho_l_old[i-1] - rho_g_old[i-1]) * V_gj_old[i-1])/ rho_old[i-1]) ) )
         DI2 = - (epsilon_old[i]*rho_l_old[i]*rho_g_old[i]*Dhfg[i]*V_gj_old[i]*areaMatrix[i]/rho_old[i]) + (epsilon_old[i-1]*rho_l_old[i-1]*rho_g_old[i-1]*Dhfg[i-1]*V_gj_old[i-1]*areaMatrix[i-1]/rho_old[i-1])
         DT1 = - (self.pressureList[self.timeCount][i%self.nFaces] * self.areaMatrix[i] - P_old[i] * areaMatrix[i])*(self.Dz/self.dt) + (self.rhoList[self.timeCount][i%self.nFaces] * self.enthalpyList[self.timeCount][i%self.nFaces] * areaMatrix[i] * (self.Dz / self.dt))
-        DM1 = self.q__[self.timeCount][i-1] * self.DV * (self.poro[i]) + DI + DI2 + DT1
+        DM1 = self.q__[self.timeCount][i-1] * self.DV[i] + DI + DI2 + DT1 +self.S_h[-1]
         VAR_VFM_Class = FVM(A00 = 1, A01 = 0, Am0 = - rho_old[-2] * U_old[-2] * areaMatrix[-2] + rho_old[-2] * areaMatrix[-2] * (self.Dz / self.dt), Am1 = rho_old[-1] * U_old[-1] * areaMatrix[-1], D0 = self.hInlet, Dm1 = DM1, N_vol = self.nFaces, H = self.height)
         VAR_VFM_Class.boundaryFilling()
         for i in range(1,self.nFaces -1):
@@ -428,7 +458,7 @@ class DFMclass():
             VAR_VFM_Class.set_ADi(i, ci =  - rho_old[i-1] * U_old[i-1] * areaMatrix[i-1] + rho_old[i] * areaMatrix[i] * (self.Dz / self.dt),
                 ai = rho_old[i] * U_old[i] * areaMatrix[i],
                 bi = 0,
-                di =  self.q__[self.timeCount][i-1] * self.DV * (self.poro[i]) + DI + DI2 + DT1)
+                di =  self.q__[self.timeCount][i-1] * self.DV[i] + DI + DI2 + DT1 + self.S_h[i])
         
         self.FVM = VAR_VFM_Class
 
@@ -474,13 +504,13 @@ class DFMclass():
                 VAR_VFM_Class.set_ADi(i, ci = - rho_old[i-1]*areaMatrix[i-1],
                 ai = rho_old[i]*areaMatrix[i],
                 bi = 0,
-                di =  ( self.rhoList[self.timeCount][i%self.nFaces] *areaMatrix[i] - rho_old[i] *areaMatrix[i] ) * (self.Dz / self.dt))
+                di =  ( self.rhoList[self.timeCount][i%self.nFaces] *areaMatrix[i] - rho_old[i] *areaMatrix[i] ) * (self.Dz / self.dt) + self.S_mass[i])
             elif i == self.nFaces-1:
                 VAR_VFM_Class.set_ADi(i, 
                 ci = - rho_old[i-1]*areaMatrix[i-1],
                 ai = rho_old[i]*areaMatrix[i],
                 bi = 0,
-                di =  ( self.rhoList[self.timeCount][i%self.nFaces] * areaMatrix[i] - rho_old[i] *areaMatrix[i] ) * (self.Dz / self.dt))
+                di =  ( self.rhoList[self.timeCount][i%self.nFaces] * areaMatrix[i] - rho_old[i] *areaMatrix[i] ) * (self.Dz / self.dt) + self.S_mass[i])
 
             #Inside the pressure submatrix
             elif i == self.nFaces:
@@ -488,8 +518,8 @@ class DFMclass():
                 VAR_VFM_Class.set_ADi(self.nFaces, 
                 ci = 0,
                 ai = - areaMatrix[i],
-                bi = areaMatrix[i+1],
-                di = - ((rho_old[i+1]+ rho_old[i])* self.g * self.DV * ((self.poro[i%self.nFaces]+ self.poro[(i+1)%self.nFaces])/2) / 2) + DI + (self.rhoList[self.timeCount][i%self.nFaces] * areaMatrix[i] * self.velocityList[self.timeCount][i%self.nFaces] * (self.Dz / self.dt)))
+                bi = areaMatrix[i],
+                di = - ((rho_old[i+1]+ rho_old[i])* self.g * self.DV[i%self.nFaces] / 2) + DI + (self.rhoList[self.timeCount][i%self.nFaces] * areaMatrix[i] * self.velocityList[self.timeCount][i%self.nFaces] * (self.Dz / self.dt))+self.S_mom[i%self.nFaces])
             
                 VAR_VFM_Class.fillingOutsideBoundary(i, i-self.nFaces,
                 ai = - rho_old[i]*VAR_old[i-self.nFaces]*areaMatrix_old_2[i] + rho_old[i]*areaMatrix[i]*(self.Dz/self.dt),
@@ -499,8 +529,8 @@ class DFMclass():
                 DI = -((epsilon_old[i+1] * rho_g_old[i+1] * rho_l_old[i+1] * V_gj_old[i+1]**2 * areaMatrix[i+1] )/ ((1 - epsilon_old[i+1])*rho_old[i+1]) )  + ((epsilon_old[i] * rho_g_old[i] * rho_l_old[i] * V_gj_old[i]**2 * areaMatrix[i] )/ ((1 - epsilon_old[i])*rho_old[i]) )     
                 VAR_VFM_Class.set_ADi(i, ci = 0,
                 ai = - areaMatrix[i],
-                bi = areaMatrix[i+1],
-                di = - ((rho_old[i+1]+ rho_old[i])* self.g * self.DV * ((self.poro[i%self.nFaces]+ self.poro[(i+1)%self.nFaces])/2)/ 2) + DI + (self.rhoList[self.timeCount][i%self.nFaces] * areaMatrix[i] * self.velocityList[self.timeCount][i%self.nFaces] * (self.Dz / self.dt)))
+                bi = areaMatrix[i],
+                di = - ((rho_old[i+1]+ rho_old[i])* self.g * self.DV[i%self.nFaces] / 2) + DI + (self.rhoList[self.timeCount][i%self.nFaces] * areaMatrix[i] * self.velocityList[self.timeCount][i%self.nFaces] * (self.Dz / self.dt))+self.S_mom[i%self.nFaces])
             
                 VAR_VFM_Class.fillingOutsideBoundary(i, i-self.nFaces,
                 ai = - rho_old[i]*VAR_old[i-self.nFaces]*areaMatrix_old_2[i] + rho_old[i]*areaMatrix[i]*(self.Dz/self.dt),
@@ -509,15 +539,16 @@ class DFMclass():
         self.FVM = VAR_VFM_Class
 
     #Calculate the residuals
-    def calculateResiduals(self):#change les residus
+    def calculateResiduals(self):# updates the residuals
         self.EPSresiduals.append(np.linalg.norm(self.voidFraction[-1] - self.voidFraction[-2]))
         self.rhoResiduals.append(np.linalg.norm((self.rho[-1] - self.rho[-2])/self.rho[-1]))
         self.xThResiduals.append(np.linalg.norm(self.xTh[-1] - self.xTh[-2]))
 
     #Checking for convergence
-    def testConvergence(self, k):#change rien et return un boolean
+    def testConvergence(self, k):# does not change anything and returns a boolean
         print(f'Convergence test number {k}, RES: errEPS: {self.EPSresiduals[-1]}, errRHO: {self.rhoResiduals[-1]}, errQua: {self.xThResiduals[-1]}')
         if self.EPSresiduals[-1] < self.epsOuterIteration and self.rhoResiduals[-1] < self.epsOuterIteration: #and self.xThResiduals[-1] < 1e-3 :
+            #print(f'Convergence test number {k}, RES: errEPS: {self.EPSresiduals[-1]}, errRHO: {self.rhoResiduals[-1]}, errQua: {self.xThResiduals[-1]}')
             return True
         else:
             return False
@@ -551,15 +582,15 @@ class DFMclass():
 
     #Function to visualise the live evolution of the resuaduels
     def residualsVisu(self):
-        # Mise à jour des données de la ligne
+        # Update the line data
         self.line.set_xdata(self.I)
         self.line.set_ydata(self.rhoResiduals)
 
-        # Ajuste les limites des axes si nécessaire
-        self.ax.relim()         # Recalcule les limites des données
-        self.ax.autoscale_view()  # Réajuste la vue automatiquement
+        # Adjust axis limits if necessary
+        self.ax.relim()         # Recomputes data limits
+        self.ax.autoscale_view()  # Automatically readjusts the view
 
-        # Dessine les modifications
+        # Draw the modifications
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
     
@@ -567,9 +598,72 @@ class DFMclass():
     def updateInlet(self):
         #Update uInlet
         self.rhoInlet = IAPWS97(T = self.tInlet, P = self.P[-1][0]*10**(-6)).rho #kg/m3
-        self.uInlet = self.qFlow / (self.flowArea * self.rhoInlet) #m/s
+        self.uInlet = self.qFlow / (self.areaMatrix[0] * self.rhoInlet) #m/s
         #Update hInlet
         self.hInlet = IAPWS97(T = self.tInlet, P = self.P[-1][0]*10**(-6)).h*1000 #J/kg
+
+    def update_jump_source(self):
+        """
+        Updates the source term for the momentum equation to account for numerical artifacts and singular pressure losses.
+        """
+        self.S_mom = np.zeros(self.nFaces)
+        
+        # 1. Instantiation of the object for two-phase correlations
+        water = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.rsin_face, self.FAST_IAPWS)
+        # Real-time connection so that the correlations use the correct values
+        water.xThTEMP = self.xTh[-1]
+        water.voidFractionTEMP = self.voidFraction[-1]
+        water.rholTEMP = self.rhoL[-1]
+        water.rhogTEMP = self.rhoG[-1]
+        water.rhoTEMP = self.rho[-1]
+        
+        for i in range(1, self.nFaces - 1):
+            A1 = self.acools[i-1]
+            # The downstream cell is i (except at the last face)
+            A2 = self.acools[i] if i < self.nCells else self.acools[-1]
+            A_face = self.areaMatrix[i]
+            
+            u_m = self.U[-1][i]
+            rho_m = self.rho[-1][i]
+            rho_l = self.rhoL[-1][i] 
+            
+            # Local mass flow rate through the face
+            m_dot = rho_m * u_m * A_face
+            
+            force_artifact_N = 0.0
+            force_perte_N = 0.0
+            
+            # --- 1. NUMERICAL BERNOULLI ARTIFACT CORRECTION (FVM) ---
+            if abs(A1 - A2) > 1e-6:
+                # A. What the FVM matrix actually computes by conservative telescoping
+                # This is exactly (rho * U_downstream^2 - rho * U_upstream^2)
+                dP_fvm = (m_dot**2 / rho_m) * (1.0/(A2**2) - 1.0/(A1**2))
+                
+                # B. What physics dictates (pure Bernoulli recovery)
+                dP_ana = (m_dot**2 / (2.0 * rho_m)) * (1.0/(A2**2) - 1.0/(A1**2))
+                
+                # The artifact is the native error of the FVM matrix.
+                artifact = dP_fvm - dP_ana
+                force_artifact_N = artifact * A_face
+
+            # --- 2. EXACT CALCULATION OF SINGULAR PRESSURE LOSSES (K) ---
+            if self.kexp_face[i] > 1e-6 or self.kcon_face[i] > 1e-6:
+                # The K coefficient from PARCS (or StarterDD) is always calibrated on the downstream cell velocity (A2)
+                G_true = m_dot / A2
+                facteur_cinetique = 0.5 * (G_true**2) / rho_l
+                
+                phi2_exp = water.getPhi2Expansion(i)
+                phi2_con = water.getPhi2Contraction(i)
+                # phi2_exp = 1.0
+                # phi2_con = 1.0
+                
+                dP_perte = (self.kexp_face[i] * phi2_exp + self.kcon_face[i] * phi2_con) * facteur_cinetique
+                force_perte_N = dP_perte * A_face
+                
+            # --- 3. INJECTION INTO THE SOURCE TERM ---
+            if abs(force_artifact_N) > 0.0 or abs(force_perte_N) > 0.0:
+                # Add the artifact correction and subtract the fluid resistance force
+                self.S_mom[i] += force_artifact_N - force_perte_N
 
     #Main function to solve the drift flux model
     def resolveDFM(self):
@@ -579,16 +673,16 @@ class DFMclass():
         if self.dt == 0:
 
             self.setInitialFields()
-            # Active le mode interactif
+            # Activate interactive mode
             #plt.ion()
-            # Crée la figure et l'axe
+            # Create the figure and axis
             #self.fig, self.ax = plt.subplots()
-            # Initialisation de la ligne qui sera mise à jour
-            #self.line, = self.ax.plot(self.I, self.rhoResiduals, 'r-', marker='o')  # 'r-' pour une ligne rouge avec des marqueurs
+            # Initialization of the line that will be updated
+            #self.line, = self.ax.plot(self.I, self.rhoResiduals, 'r-', marker='o')  # 'r-' for a red line with markers
 
             #Loop for the outer iterations (velocity-pressure and enthalpy)
             for k in range(self.maxOuterIteration):
-                
+                self.update_jump_source()
                 self.createSystemVelocityPressure()
                 resolveSystem = numericalResolution(self.FVM,self.mergeVar(self.U[-1], self.P[-1]), self.epsInnerIteration, self.maxInnerIteration, self.numericalMethod)
                 Utemp, Ptemp = self.splitVar(resolveSystem.x)
@@ -604,7 +698,7 @@ class DFMclass():
                 Htemp = resolveSystem.x
 
                 self.H.append(Htemp)
-                updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.qFlow, self.fuelRadius, self.pitch/2)
+                updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.rsin_face, self.FAST_IAPWS)
                 updateVariables.updateFields()
 
                 self.xTh.append(updateVariables.xThTEMP)
@@ -647,13 +741,13 @@ class DFMclass():
         elif self.dt != 0:
 
             self.setInitialFieldsTransient()
-            # Active le mode interactif
+            # Activate interactive mode
             plt.ion()
-            # Crée la figure et l'axe
+            # Create the figure and axis
             self.fig, self.ax = plt.subplots()
             self.figh, self.axh = plt.subplots()   
-            # Initialisation de la ligne qui sera mise à jour
-            self.line, = self.ax.plot(self.I, self.rhoResiduals, 'r-', marker='o')  # 'r-' pour une ligne rouge avec des marqueurs
+            # Initialization of the line that will be updated
+            self.line, = self.ax.plot(self.I, self.rhoResiduals, 'r-', marker='o')  # 'r-' for a red line with markers
             
             for t in range(0, len(self.timeList)-1):
                 self.timeCount = t
@@ -674,7 +768,7 @@ class DFMclass():
                     Htemp = resolveSystem.x
 
                     self.H.append(Htemp)
-                    updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.fuelRadius, self.pitch/2)
+                    updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.rsin_face, self.FAST_IAPWS)
                     updateVariables.updateFields()
 
                     self.xTh.append(updateVariables.xThTEMP)
@@ -741,11 +835,11 @@ class DFMclass():
             plt.ioff()
             plt.show()
 
-            #besoin d'interpoler pour avoir le bon nombre de valeur (passer de node centered a cell centered)
+            #need to interpolate to get the correct number of values (convert from node-centered to cell-centered)
         
         self.T_water = np.zeros(self.nFaces)
         for i in range(self.nFaces):
-            self.T_water[i] = IAPWS97(P=self.P[-1][i]*10**-6, h=self.H[-1][i]*10**-3).T
+            self.T_water[i] = self.FAST_IAPWS.get_sub_T(self.P[-1][i]*10**-6, self.H[-1][i]*10**-3)
 
         self.interpolate()
 
@@ -770,6 +864,7 @@ class DFMclass():
             self.f[-1].append((fTemp[i] + fTemp[i+1])/2)
             self.areaMatrix_1[-1].append((areaMatrix_1Temp[i] + areaMatrix_1Temp[i+1])/2)
             self.areaMatrix_2[-1].append((areaMatrix_2Temp[i] + areaMatrix_2Temp[i+1])/2)
+            self.areaMatrix.append((areaMatrixTemp[i] + areaMatrixTemp[i+1])/2)
             self.Vgj[-1].append((VgjTemp[i] + VgjTemp[i+1])/2)
             self.C0[-1].append((C0Temp[i] + C0Temp[i+1])/2)
             self.VgjPrime[-1].append((VgjPrimeTemp[i] + VgjPrimeTemp[i+1])/2)
@@ -786,15 +881,80 @@ class DFMclass():
         self.h_z = self.H[-1]
         self.T_surf = np.zeros(self.nCells)
         self.Hc = np.zeros(self.nCells)
+        updateVariables = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.rsin_face, self.FAST_IAPWS)
+        updateVariables.createFields()
         for i in range(self.nCells):
-            Pr_number = IAPWS97(P=self.Pfin[i]*10**-6, h=self.h_z[i]*10**-3).Liquid.Prandt
-            Re_number = self.getReynoldsNumber(i)
-            k_fluid = IAPWS97(P=self.Pfin[i]*10**-6, h=self.h_z[i]*10**-3).Liquid.k
-            self.Hc[i] = (0.023)*(Pr_number)**0.4*(Re_number)**0.8*k_fluid/self.D_h[i]
-            self.T_surf[i] = ((self.q__[i]*self.flowArea)/(2*np.pi*self.cladRadius)/self.Hc[i]+self.T_water[i])
-    
+            hl, hg = updateVariables.getPhasesEnthalpy(i)
+            P_MPa = self.Pfin[i]*10**-6
+            Tsat = self.FAST_IAPWS.get_Tsat(P_MPa)
+            DTSUB = updateVariables.getDTSUB(i)
+            H_kJ = self.h_z[i]*10**-3
+            phi = (self.q__[i] * self.areaMatrix[i])/(self.number_of_pins[i] * 2 * np.pi * self.cladRadius)
+            rho_l = self.FAST_IAPWS.get_rhol(P_MPa)
+            rho_g = self.FAST_IAPWS.get_rhog(P_MPa)
+            mu_l = self.FAST_IAPWS.get_mul(P_MPa)
+            mu_g = self.FAST_IAPWS.get_mug(P_MPa)
+            k_l = self.FAST_IAPWS.get_kl(P_MPa)
+            k_g = self.FAST_IAPWS.get_kg(P_MPa)
+            C_l = self.FAST_IAPWS.get_cpl(P_MPa) * 1000.0
+            C_g = self.FAST_IAPWS.get_cpg(P_MPa) * 1000.0
+            sigma = self.FAST_IAPWS.get_sigma(P_MPa)
+            h_fg = (hg - hl) * 1000.0
+            # Liquid regime: Dittus-Boelter
+            Pr_l = (C_l * mu_l) / k_l
+            Pr_g = (C_g * mu_g) / k_g
+            Re_l_db = max(1e-4, updateVariables.getReynoldsNumberLiquid(i))
+            Hc_liq = 0.023 * (Pr_l**0.4) * (Re_l_db**0.8) * k_l / self.D_h[i]
+            T_surf_liq = (phi / Hc_liq) + self.T_water[i]
+            # Boiling regime: Chen
+            G = self.rho[-1][i] * abs(self.U[-1][i])
+            x_flow = updateVariables.getQuality(i)
+            x_borne_sup = min_lisse(0.999, x_flow, 1e-4)
+            x = max_lisse(1e-5, x_borne_sup, 1e-5)
+            X_tt_inv = ((x/(1.0-x))**0.9) * ((rho_l/rho_g)**0.5) * ((mu_g/mu_l)**0.1)
+            F_calcul = 2.35 *(0.213 + X_tt_inv)**0.736 
+            F = if_lisse(X_tt_inv, 0.100207, 0.01, F_calcul, 1.0)
+            Re_l_chen = max(1e-4, G *(1.0-x)*self.D_h[i]/mu_l)
+            H_sp = 0.023 * (Pr_l**0.4)*(Re_l_chen**0.8)*k_l/self.D_h[i]
+            H_c_chen = F * H_sp
+            S_fz = 1.0/(1.0 + 2.53e-6*(Re_l_chen*F**(1.25))**1.17)
+            C_fz = 0.00122 * (k_l**(0.79) * C_l**(0.45) * rho_l**(0.49))/(mu_l**(0.29) * sigma**(0.5) * h_fg**(0.24) * rho_g**0.24)
+            T_surf_guess = self.T_water[i] + phi/H_c_chen
+            #Newton loop for nucleate boiling
+            for j in range(20):
+                delta_T_sat = max_lisse(0.01, T_surf_guess - Tsat, 0.1)
+                T_eval = min_lisse(T_surf_guess, 647.0, 0.5)
+                
+                try:
+                    P_sat_wall = np.interp(T_eval, self.FAST_IAPWS.Tsat, self.FAST_IAPWS.P_arr) * 1e6
+                except (NotImplementedError, ValueError):
+                    P_sat_wall = P_MPa * 1e6
+                    
+                delta_P_sat = max_lisse(1.0, P_sat_wall - (P_MPa * 1e6), 10.0)
+                
+                H_fz = C_fz * (delta_T_sat**0.24) * (delta_P_sat**0.75)
+                H_nb = S_fz * H_fz
+                T_surf_new = (phi + H_nb * Tsat + H_c_chen * self.T_water[i]) / (H_nb + H_c_chen)
+                
+                if abs(T_surf_new - T_surf_guess) < 0.05:
+                    T_surf_guess = T_surf_new
+                    break
+                T_surf_guess = 0.5 * T_surf_new + 0.5 * T_surf_guess
+            T_surf_boil = T_surf_guess
+            Hc_boil = H_nb + H_c_chen
+            # Vapor regime: Dittus-Boelter
+            Re_g_db = max(1e-4, updateVariables.getReynoldsNumberVapor(i))
+            Hc_vap = 0.023 * (Pr_g**0.4) * (Re_g_db**0.8) * k_g / self.D_h[i]
+            T_surf_vap = (phi / Hc_vap) + self.T_water
+            #Global assembly
+            T_onset = Tsat-DTSUB
+            T_surf_trans1 = if_lisse(self.T_water[i], T_onset, 0.5, T_surf_boil, T_surf_liq)
+            Hc_trans1 = if_lisse(self.T_water[i], T_onset, 0.5, Hc_boil, Hc_liq)
+            val_T = if_lisse(H_kJ, hg, 10.0, T_surf_vap, T_surf_trans1)
+            val_Hc = if_lisse(H_kJ, hg, 10.0, Hc_vap, Hc_trans1)
+            self.T_surf[i] = np.ravel(val_T)[0]
+            self.Hc[i] = np.ravel(val_Hc)[0]
         return self.T_surf
-
     #Function to use the sous relaxation
     def sousRelaxation(self):
 
@@ -821,7 +981,7 @@ class DFMclass():
     
     #Function to get the phases velocity
     def getPhasesVelocity(self):
-        water = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.D_h, self.areaMatrix, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.qFlow, self.fuelRadius, self.pitch/2)
+        water = statesVariables(self.U[-1], self.P[-1], self.H[-1], self.voidFraction[-1], self.cladRadius, self.pin_pitch, self.pitch, self.D_h, self.areaMatrix, self.poro, self.DV, self.voidFractionCorrel, self.frfaccorel, self.P2Pcorel, self.Dz, self.q__, self.phs, self.qFlow, self.fuelRadius, self.pitch/2, self.rsin_face, self.FAST_IAPWS)
         Ul = [water.getUl(i) for i in range(self.nCells)]
         Ug = [water.getUg(i) for i in range(self.nCells)]
         return Ul, Ug
@@ -834,5 +994,6 @@ class DFMclass():
  
     #get the Reynolds number
     def getReynoldsNumber(self, i):
-        return (self.U[-1][i] * self.D_h[i] * self.rho[-1][i]) / IAPWS97(P=self.P[-1][i]*10**-6, x=0).Liquid.mu
+        mul = self.FAST_IAPWS.get_mul(self.P[-1][i]*10**-6)
+        return (self.U[-1][i] * self.D_h[i] * self.rho[-1][i]) / mul
      

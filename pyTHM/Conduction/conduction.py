@@ -61,7 +61,7 @@ class HeatConductionInFuelPin:
         self.kf = kf
         self.kc = kc
         # compute relevant quantities to initialise object
-        self.N_node = I_f + I_c +2
+        self.N_node = I_f + I_c + 2
         self.A = np.eye(self.N_node)
         self.D = np.zeros(self.N_node)
         self.compute_Area_meshes()
@@ -93,7 +93,7 @@ class HeatConductionInFuelPin:
         self.A_mesh_bounds = []
         self.A_mesh_centers = []
         A_f = self.r_f**2/2
-        A_gf =self.gap_r**2/2
+        A_gf = self.gap_r**2/2
         A_cgf = self.clad_r**2/2
         self.deltaA_f = A_f / self.I_f # base assumption is that delta_A is constant in each region --> delta A fuel = constant in fuel, delta A clad = constant in clad and 1 delta A gap.
         for i in range(self.I_f+1):

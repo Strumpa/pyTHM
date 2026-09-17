@@ -83,8 +83,6 @@ class numericalResolution():
 
     #Directly solve the system using matrix inversion with preconditioning (LU factorization)
     def resolveInversion(self):
-        L, U = self.preconditionner(self.A)
-        M = np.dot(L,U)
         VAR = np.linalg.solve(self.A,self.b)
         return VAR
 
@@ -172,10 +170,10 @@ class numericalResolution():
 
         L,U = self.preconditionner(self.A)
         M = L @ U
-        self.condNUMBERB = np.linalg.cond(self.A)
-        self.condNUMBER = np.linalg.cond(np.dot(np.linalg.inv(M), self.A))
-        
-        MStar = np.linalg.inv(M)
+        try:
+            MStar = np.linalg.inv(M)
+        except np.linalg.LinAlgError:
+            MStar = np.eye(self.n)  # Fallback to identity if M is singular
         AStar = np.transpose(self.A)
         x0 = self.x0
         r0 = self.b - np.dot(self.A,x0)
